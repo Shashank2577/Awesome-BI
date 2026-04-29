@@ -1,0 +1,177 @@
+Title: Business Requirements Document (BRD)
+Project: Self-Hosted Data Analysis & Reporting Utility
+Version: 1.0
+Date: April 29, 2026
+
+1. Executive Summary
+The organization requires a self-hosted, single-tenant data analysis and reporting utility that integrates directly with PostgreSQL databases. The solution must provide manual business intelligence capabilities, API-first architecture, and optional AI-assisted features. The system must remain cost-efficient, relying solely on open-source components and user-provided LLM API usage.
+
+2. Business Objectives
+- Enable secure, self-hosted reporting within user infrastructure.
+- Provide API-first access to all reporting functionality.
+- Support manual BI operations (aggregations, joins, filters).
+- Allow AI-assisted query/report generation using user-provided API keys.
+- Ensure exportability of raw data and visualizations.
+- Minimize custom development effort by leveraging open-source BI frameworks.
+
+3. Scope
+In-Scope:
+- PostgreSQL integration.
+- API-first reporting engine.
+- Manual BI dashboards and queries.
+- AI-assisted report generation.
+- Export to CSV and structured reports.
+Out-of-Scope:
+- Multi-tenant hosting.
+- Proprietary paid BI platforms.
+- Non-PostgreSQL databases (future roadmap).
+
+4. Stakeholders
+- End Users: Analysts, business managers.
+- IT Administrators: Responsible for deployment and maintenance.
+- Developers: Responsible for orchestration and AI integration.
+
+5. Success Criteria
+- 90% of functionality delivered via open-source frameworks.
+- ≤10% custom orchestration code.
+- Secure, stable, and performant reporting engine.
+- Seamless AI integration without replacing manual BI.
+
+
+Title: Functional Requirements Document (FRD)
+Project: Self-Hosted Data Analysis & Reporting Utility
+Version: 1.0
+Date: April 29, 2026
+
+1. Core Functional Requirements
+- API-First & Headless:
+  - All reporting functionality exposed via REST/GraphQL APIs.
+  - Optional built-in UI for dashboards.
+- Manual BI:
+  - Support for aggregations, group by, joins, date filters.
+  - Query history tracking.
+- AI Assist:
+  - AI reads database schema/semantic layer.
+  - AI suggests possible reports.
+  - AI accepts natural language commands to configure/edit reports.
+- Exportability:
+  - Export raw data to CSV.
+  - Export visualizations and structured reports (PDF, XLS).
+- Security:
+  - Credentials stored securely.
+  - Single-tenant deployment ensures isolation.
+
+2. Non-Functional Requirements
+- Performance: Queries must execute within acceptable latency (<2s for standard aggregations).
+- Scalability: Must handle datasets up to 100M rows.
+- Reliability: 99.9% uptime target.
+- Maintainability: Modular architecture with minimal custom code.
+- Licensing: Only free/open-source components.
+
+3. User Stories
+- As an analyst, I want to run manual queries and export results to CSV.
+- As a manager, I want to view dashboards with filters and aggregations.
+- As a developer, I want to integrate reporting APIs into existing systems.
+- As a user, I want AI to suggest reports based on schema metadata.
+
+
+Title: Technical Architecture Document
+Project: Self-Hosted Data Analysis & Reporting Utility
+Version: 1.0
+Date: April 29, 2026
+
+1. System Architecture
+PostgreSQL Database
+   │
+   ▼
+Cube.dev (Semantic Layer + API-first Query Engine)
+   │
+   ├── Metabase OSS (Manual BI Dashboards, CSV Export)
+   │
+   └── JasperReports/DynamicJasper (Structured Report Generation)
+
+2. Components
+- Cube.dev:
+  - Provides semantic layer.
+  - Exposes REST/GraphQL APIs.
+  - Schema metadata accessible to AI.
+- Metabase OSS:
+  - Provides UI dashboards.
+  - Supports manual BI operations.
+  - Exports CSV and tracks query history.
+- JasperReports/DynamicJasper:
+  - Generates structured, printable reports.
+  - Consumes Cube queries for consistency.
+
+3. AI Integration
+- AI layer connects to Cube semantic schema.
+- Natural language → Cube query translation.
+- AI orchestrates report creation in Metabase or Jasper.
+
+4. Deployment
+- Self-hosted Docker containers.
+- Single-tenant architecture.
+- Secure credential injection for PostgreSQL.
+
+5. Technology Stack
+- Backend: Cube.dev (Node.js), Metabase (Clojure/Java), JasperReports (Java).
+- Orchestration: Custom service (Python/Go/Node.js).
+- AI Integration: OpenAI/Gemini API via orchestration layer.
+
+
+Title: Autonomous Coding Specification
+Project: Self-Hosted Data Analysis & Reporting Utility
+Version: 1.0
+Date: April 29, 2026
+
+Objective:
+Implement a self-hosted, single-tenant reporting utility that connects to PostgreSQL, exposes API-first reporting functionality, supports manual BI, integrates AI assistance, and enables exportability.
+
+System Requirements:
+- PostgreSQL integration with secure credential storage.
+- Cube.dev as semantic layer and API-first query engine.
+- Metabase OSS for manual BI dashboards and CSV export.
+- JasperReports/DynamicJasper for structured report generation.
+- Orchestration service to unify APIs and integrate AI.
+
+Functional Modules:
+1. Database Connector:
+   - Connect to PostgreSQL using provided credentials.
+   - Validate schema and expose metadata.
+2. Semantic Layer (Cube.dev):
+   - Define schema models.
+   - Expose REST/GraphQL APIs for queries.
+3. BI Dashboards (Metabase):
+   - Provide manual query builder.
+   - Support filters, joins, aggregations.
+   - Export CSV and track query history.
+4. Reporting Engine (JasperReports):
+   - Generate structured reports (PDF, XLS).
+   - Consume Cube queries for consistency.
+5. AI Assist Layer:
+   - Accept API keys for LLMs.
+   - Read Cube schema metadata.
+   - Translate natural language → Cube queries.
+   - Suggest dashboards/reports.
+6. Orchestration Service:
+   - Written in Python/Node.js/Go.
+   - Routes queries between Cube, Metabase, Jasper.
+   - Provides unified API endpoint.
+   - Handles AI integration.
+
+Deployment:
+- Dockerized containers for Cube.dev, Metabase, JasperReports, and orchestration service.
+- Single-tenant deployment model.
+- Environment variables for PostgreSQL credentials and LLM API keys.
+
+Constraints:
+- Only free/open-source components.
+- Running costs limited to server hosting and user’s LLM API usage.
+- ≤10% custom orchestration code.
+
+Deliverables:
+- Docker Compose file for deployment.
+- Orchestration service source code.
+- API documentation (OpenAPI/Swagger).
+- Example AI integration scripts.
+
