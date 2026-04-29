@@ -1,0 +1,1200 @@
+Understood. I’ll structure this as four complete, production-grade artifacts that an LLM (or engineering team) can directly act on.
+
+
+---
+
+1. BUSINESS REQUIREMENTS (BR)
+
+1.1 Objective
+
+Design and deliver a self-hosted, single-tenant data analysis and reporting platform that enables users to:
+
+Connect securely to their PostgreSQL database
+
+Perform manual business intelligence (BI) operations
+
+Generate, manage, and export reports
+
+Leverage AI assistance for report creation and modification using a Bring-Your-Own-Key (BYOK) model
+
+
+
+---
+
+1.2 Key Goals
+
+Zero vendor lock-in
+
+Fully self-hostable
+
+API-first and headless architecture
+
+Minimal operational cost (infra + user-provided LLM API only)
+
+AI as an assistive layer, not a dependency
+
+
+
+---
+
+1.3 Target Users
+
+Engineering teams
+
+Data analysts
+
+SaaS companies embedding reporting into their products
+
+Enterprises requiring on-prem or VPC deployment
+
+
+
+---
+
+1.4 Core Capabilities
+
+1. Database connectivity (PostgreSQL)
+
+
+2. Manual BI (queries, aggregations, joins, filters)
+
+
+3. Dashboard and report management
+
+
+4. Export (CSV primarily)
+
+
+5. AI-assisted report creation and editing
+
+
+6. Full API access for all operations
+
+
+
+
+---
+
+1.5 Constraints
+
+Only open-source or free-tier tools allowed
+
+No mandatory SaaS dependency
+
+AI usage must rely exclusively on user-provided API keys
+
+Single-tenant deployment per customer
+
+
+
+---
+
+1.6 Success Criteria
+
+User can create reports without AI
+
+User can generate/edit reports using natural language
+
+System can be deployed via Docker within 15 minutes
+
+All features accessible via API
+
+
+
+---
+
+2. BUSINESS REQUIREMENT DOCUMENT (BRD)
+
+2.1 Scope
+
+The system includes:
+
+Data connection layer
+
+BI query and visualization engine
+
+API abstraction layer
+
+AI orchestration layer
+
+Report storage and lifecycle management
+
+
+Excludes:
+
+Multi-database support (initial version limited to PostgreSQL)
+
+Advanced ML/forecasting features
+
+Real-time streaming analytics
+
+
+
+---
+
+2.2 Stakeholders
+
+Product Owner
+
+Engineering Team
+
+DevOps Team
+
+End Users (Analysts / Developers)
+
+
+
+---
+
+2.3 User Stories
+
+Data Connection
+
+As a user, I want to connect my PostgreSQL database using credentials so that I can analyze my data.
+
+
+Manual BI
+
+As a user, I want to create queries using filters, joins, and aggregations without AI.
+
+
+Report Management
+
+As a user, I want to save, edit, and reuse reports.
+
+
+Export
+
+As a user, I want to export query results as CSV.
+
+
+AI Assistance
+
+As a user, I want to describe a report in natural language and have it created automatically.
+
+
+BYOK
+
+As a user, I want to provide my own LLM API key and choose the provider.
+
+
+
+---
+
+2.4 Non-Functional Requirements
+
+Performance
+
+Query response time: < 5 seconds for standard datasets
+
+AI response time: < 10 seconds
+
+
+Security
+
+No storage of LLM API keys in plaintext
+
+Secure DB credential handling (encrypted at rest)
+
+
+Scalability
+
+Single-tenant scaling vertically
+
+Optional horizontal scaling for backend
+
+
+Availability
+
+99% uptime (dependent on hosting)
+
+
+
+---
+
+2.5 Risks
+
+AI hallucination leading to incorrect queries
+
+Schema complexity impacting AI usability
+
+Performance bottlenecks on large datasets
+
+
+Mitigation:
+
+Query validation layer
+
+Schema abstraction (semantic layer optional)
+
+Query limits and safeguards
+
+
+
+---
+
+3. FUNCTIONAL REQUIREMENTS DOCUMENT (FRD)
+
+3.1 System Modules
+
+3.1.1 Data Source Module
+
+Accept PostgreSQL credentials
+
+Validate connection
+
+Fetch schema metadata:
+
+tables
+
+columns
+
+relationships (foreign keys)
+
+
+
+
+---
+
+3.1.2 BI Engine Integration
+
+Support:
+
+SELECT queries
+
+GROUP BY
+
+JOIN
+
+WHERE filters
+
+date-based filtering
+
+
+Save query definitions as reports
+
+
+
+---
+
+3.1.3 Report Management
+
+Create report
+
+Update report
+
+Delete report
+
+Retrieve report
+
+Version history (optional but recommended)
+
+
+
+---
+
+3.1.4 Visualization
+
+Table view (mandatory)
+
+Chart types (optional but recommended):
+
+bar
+
+line
+
+pie
+
+
+
+
+---
+
+3.1.5 Export
+
+Export report data to CSV
+
+Include:
+
+column headers
+
+formatted data
+
+
+
+
+---
+
+3.1.6 AI Module (BYOK)
+
+Supported Providers
+
+OpenAI
+
+Google Gemini
+
+Anthropic Claude
+
+Extensible for others
+
+
+Capabilities
+
+1. Schema understanding
+
+
+2. Report suggestion
+
+
+3. Natural language to structured query
+
+
+4. Report modification
+
+
+
+Input
+
+User prompt
+
+Schema metadata
+
+Existing report (optional)
+
+
+Output (STRICT JSON)
+
+{
+  "action": "create|modify",
+  "query": {
+    "measures": [],
+    "dimensions": [],
+    "filters": [],
+    "time_range": ""
+  },
+  "visualization": "table|bar|line|pie"
+}
+
+
+---
+
+3.1.7 API Layer (Mandatory)
+
+Report APIs
+
+POST /reports
+
+GET /reports/{id}
+
+PUT /reports/{id}
+
+DELETE /reports/{id}
+
+
+Query APIs
+
+POST /query/run
+
+POST /query/validate
+
+
+AI APIs
+
+POST /ai/suggest
+
+POST /ai/modify
+
+
+Data Source APIs
+
+POST /datasource/connect
+
+GET /datasource/schema
+
+
+
+---
+
+3.1.8 Authentication
+
+API key-based authentication (initial)
+
+Optional JWT support
+
+
+
+---
+
+3.2 Validation Rules
+
+Only SELECT queries allowed
+
+No DDL/DML operations
+
+Query timeout enforced
+
+Row limits configurable
+
+
+
+---
+
+4. TECHNICAL SPECIFICATION (TS)
+
+4.1 High-Level Architecture
+
+Components:
+
+1. PostgreSQL (external or user-provided)
+
+
+2. BI Engine (Metabase or equivalent)
+
+
+3. Backend Service (Spring Boot / Node.js)
+
+
+4. AI Orchestrator
+
+
+5. Optional Semantic Layer (Cube)
+
+
+
+
+---
+
+4.2 Technology Stack
+
+Backend
+
+Java (Spring Boot) or Node.js (NestJS)
+
+REST API
+
+
+BI Layer
+
+Metabase (primary)
+
+Cube (optional)
+
+
+Database
+
+PostgreSQL (user-provided)
+
+
+AI Integration
+
+REST-based LLM APIs
+
+
+
+---
+
+4.3 Deployment
+
+Docker Compose Services
+
+backend
+
+metabase
+
+cube (optional)
+
+postgres (optional)
+
+
+
+---
+
+4.4 Data Flow
+
+Manual Query
+
+Client → Backend → BI Engine → PostgreSQL → Response
+
+AI Query
+
+Client → Backend → AI Orchestrator → LLM
+→ Structured JSON → Backend
+→ BI Engine → PostgreSQL → Response
+
+
+---
+
+4.5 Schema Introspection
+
+Extract:
+
+tables
+
+columns
+
+data types
+
+relationships
+
+
+Store as:
+
+{
+  "tables": [
+    {
+      "name": "",
+      "columns": [],
+      "relations": []
+    }
+  ]
+}
+
+
+---
+
+4.6 AI Prompt Template
+
+System Prompt:
+
+You are a BI assistant
+
+Only generate structured JSON
+
+Do not generate SQL
+
+
+User Input:
+
+natural language query
+
+
+Context:
+
+schema metadata
+
+
+
+---
+
+4.7 Query Translation Layer
+
+Convert AI JSON → BI query:
+
+map measures to aggregations
+
+map dimensions to groupings
+
+map filters to WHERE clause
+
+
+
+---
+
+4.8 Security
+
+Encrypt:
+
+DB credentials
+
+API keys
+
+
+Use:
+
+AES-256 for storage
+
+
+Never log sensitive data
+
+
+
+---
+
+4.9 BYOK Implementation
+
+User provides:
+
+provider
+
+API key
+
+
+Store securely
+
+Dynamically route requests:
+
+
+if provider == "openai" → OpenAI API
+if provider == "gemini" → Google API
+if provider == "anthropic" → Claude API
+
+
+---
+
+4.10 Error Handling
+
+AI failure → fallback to manual mode
+
+Query failure → return structured error
+
+Timeout → cancel query
+
+
+
+---
+
+4.11 Extensibility
+
+Future additions:
+
+Multi-database support
+
+Role-based access control
+
+Scheduled reports
+
+Semantic layer enforcement
+
+
+
+---
+
+4.12 Logging & Monitoring
+
+Request logs
+
+Query execution logs
+
+AI interaction logs (without sensitive data)
+
+
+
+---
+
+4.13 Performance Optimization
+
+Query caching (if Cube used)
+
+Pagination for large datasets
+
+Index recommendations (future)
+
+
+
+---
+
+FINAL NOTE
+
+This specification is intentionally:
+
+API-complete
+
+LLM-consumable
+
+Implementation-ready
+
+
+No critical component is abstracted away.
+An LLM can begin generating:
+
+backend services
+
+API contracts
+
+orchestration logic
+
+integration layers
+
+
+
+---
+
+If you want next, I can generate:
+
+OpenAPI (Swagger) spec
+
+Database schema for internal storage
+
+Exact prompt engineering templates for each LLM provider
+
+
+Just say the word.
+
+
+…yeah, that’s fair. What I gave you earlier is directional, not deterministic.
+If you hand that to an LLM, it will improvise — and you don’t want that.
+
+So now we tighten it. No ambiguity. No “optional”. No room for interpretation.
+
+Below is a STRICT IMPLEMENTATION SPEC (LLM-CODING SPEC).
+This is designed so an LLM has exactly one valid way to build the system.
+
+
+---
+
+STRICT IMPLEMENTATION SPECIFICATION (SIS)
+
+0. PURPOSE
+
+This document defines a deterministic, implementation-ready specification for a self-hosted BI + AI reporting system.
+An LLM consuming this spec MUST generate a working system without making architectural decisions.
+
+
+---
+
+1. FIXED ARCHITECTURE (NON-NEGOTIABLE)
+
+1.1 Components (ALL REQUIRED)
+
+The system SHALL consist of exactly 4 services:
+
+1. Backend Service
+
+
+2. Metabase Service
+
+
+3. PostgreSQL (User Database – External)
+
+
+4. Internal Metadata Database (PostgreSQL)
+
+
+
+Optional component (disabled by default): 5. Cube Service (Feature Flag Controlled)
+
+
+---
+
+1.2 Technology Stack (FIXED)
+
+Backend:
+
+Java 21
+
+Spring Boot 3.x
+
+Spring Web
+
+Spring Security
+
+Spring Data JPA
+
+
+Database:
+
+PostgreSQL 15+
+
+
+BI Engine:
+
+Metabase OSS (latest stable Docker image)
+
+
+Containerization:
+
+Docker + Docker Compose ONLY
+
+
+
+---
+
+2. DIRECTORY STRUCTURE (MANDATORY)
+
+root/
+ ├── backend/
+ │    ├── src/main/java/com/reporting/
+ │    ├── config/
+ │    ├── controller/
+ │    ├── service/
+ │    ├── repository/
+ │    ├── model/
+ │    └── ai/
+ ├── docker-compose.yml
+ ├── .env
+ └── README.md
+
+
+---
+
+3. CONFIGURATION (MANDATORY)
+
+3.1 ENV VARIABLES
+
+APP_PORT=8080
+
+METABASE_URL=http://metabase:3000
+METABASE_API_KEY=CHANGE_ME
+
+INTERNAL_DB_URL=jdbc:postgresql://metadata-db:5432/reporting
+INTERNAL_DB_USER=admin
+INTERNAL_DB_PASSWORD=admin
+
+LLM_PROVIDER=openai|gemini|anthropic
+LLM_API_KEY=USER_PROVIDED
+LLM_MODEL=STRING
+
+
+---
+
+4. INTERNAL DATABASE SCHEMA (MANDATORY)
+
+4.1 TABLE: datasources
+
+CREATE TABLE datasources (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255),
+    db_host VARCHAR(255),
+    db_port INT,
+    db_name VARCHAR(255),
+    db_user VARCHAR(255),
+    db_password TEXT,
+    created_at TIMESTAMP
+);
+
+
+---
+
+4.2 TABLE: reports
+
+CREATE TABLE reports (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255),
+    datasource_id UUID,
+    query_json JSONB,
+    visualization VARCHAR(50),
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+
+---
+
+4.3 TABLE: ai_logs
+
+CREATE TABLE ai_logs (
+    id UUID PRIMARY KEY,
+    prompt TEXT,
+    response JSONB,
+    created_at TIMESTAMP
+);
+
+
+---
+
+5. API CONTRACT (STRICT)
+
+5.1 DATASOURCE
+
+POST /datasources
+
+Request:
+
+{
+  "name": "string",
+  "host": "string",
+  "port": 5432,
+  "database": "string",
+  "username": "string",
+  "password": "string"
+}
+
+Response:
+
+{
+  "id": "uuid"
+}
+
+
+---
+
+GET /datasources/{id}/schema
+
+Response:
+
+{
+  "tables": [
+    {
+      "name": "string",
+      "columns": [
+        {
+          "name": "string",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}
+
+
+---
+
+5.2 REPORTS
+
+POST /reports
+
+{
+  "name": "string",
+  "datasource_id": "uuid",
+  "query": {
+    "select": ["column"],
+    "aggregations": [
+      {"type": "SUM|COUNT|AVG", "field": "column"}
+    ],
+    "filters": [
+      {"field": "column", "operator": "=", "value": "string"}
+    ],
+    "group_by": ["column"]
+  },
+  "visualization": "table|bar|line|pie"
+}
+
+
+---
+
+GET /reports/{id}
+
+Returns full report object
+
+
+---
+
+POST /reports/{id}/run
+
+Response:
+
+{
+  "columns": ["col1"],
+  "rows": [["value"]]
+}
+
+
+---
+
+6. QUERY EXECUTION RULES (STRICT)
+
+1. ONLY SELECT queries allowed
+
+
+2. LIMIT must be enforced (default 1000 rows)
+
+
+3. NO raw SQL input from user
+
+
+4. Query MUST be constructed from JSON model ONLY
+
+
+
+
+---
+
+7. AI MODULE (STRICT)
+
+7.1 SUPPORTED PROVIDERS
+
+OpenAI
+
+Gemini
+
+Anthropic
+
+
+Provider selection MUST be based on ENV variable LLM_PROVIDER
+
+
+---
+
+7.2 AI INPUT CONTRACT
+
+{
+  "user_prompt": "string",
+  "schema": {},
+  "existing_report": {}
+}
+
+
+---
+
+7.3 AI OUTPUT CONTRACT (STRICT – VALIDATE JSON)
+
+{
+  "action": "create|modify",
+  "query": {
+    "select": ["column"],
+    "aggregations": [],
+    "filters": [],
+    "group_by": []
+  },
+  "visualization": "table|bar|line|pie"
+}
+
+
+---
+
+7.4 HARD RULES
+
+AI MUST NOT generate SQL
+
+AI MUST ONLY output JSON
+
+Backend MUST validate schema fields exist
+
+If invalid → reject request
+
+
+
+---
+
+8. AI PROMPT TEMPLATE (FIXED)
+
+System Prompt:
+
+You are a reporting assistant.
+
+Rules:
+- Only return JSON
+- Do not return SQL
+- Use only fields present in schema
+- Follow exact schema format
+- Do not hallucinate columns
+
+
+---
+
+9. METABASE INTEGRATION (FIXED APPROACH)
+
+Use Metabase REST API
+
+Backend MUST:
+
+1. Create questions
+
+
+2. Execute queries
+
+
+3. Fetch results
+
+
+
+
+NO direct UI dependency allowed
+
+
+---
+
+10. SECURITY RULES
+
+Encrypt DB password using AES before storing
+
+Do not log:
+
+passwords
+
+API keys
+
+
+All endpoints require API key header:
+
+
+X-API-KEY
+
+
+---
+
+11. DOCKER COMPOSE (MANDATORY SERVICES)
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+
+  metabase:
+    image: metabase/metabase
+
+  metadata-db:
+    image: postgres:15
+
+
+---
+
+12. ERROR HANDLING (STRICT FORMAT)
+
+{
+  "error": "string",
+  "code": "string"
+}
+
+
+---
+
+13. NON-FUNCTIONAL ENFORCEMENTS
+
+Max query execution: 10 seconds
+
+Max rows returned: 1000
+
+AI timeout: 15 seconds
+
+
+
+---
+
+14. FEATURE FLAGS
+
+ENABLE_CUBE=false
+ENABLE_AI=true
+
+
+---
+
+15. EXTENSION POINTS (DO NOT IMPLEMENT NOW)
+
+Multi-database support
+
+Role-based access
+
+Scheduling
+
+
+
+---
+
+FINAL CONSTRAINT
+
+The implementation MUST:
+
+Not introduce additional services
+
+Not modify API contracts
+
+Not generate raw SQL from AI
+
+Not bypass validation layers
+
+
+
+---
+
+…there.
+
+Now if you give this to an LLM, it doesn’t think — it executes.
+No freedom = no hallucination.
+
+
+---
+
+If you want next level (and honestly, you should 😏):
+
+I can generate:
+
+Exact Spring Boot class skeletons
+
+Full OpenAPI YAML
+
+AI adapter implementations for all 3 providers
+
+
+Just say it.
