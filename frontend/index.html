@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reporting Utility</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { font-size: 24px; border-bottom: 2px solid #eaeaea; padding-bottom: 10px; }
+        .actions { margin-bottom: 20px; }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; }
+        .output { margin-top: 20px; padding: 10px; background: #eee; border-radius: 4px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Self-Hosted Reporting Utility</h1>
+
+        <div class="actions">
+            <button onclick="runE2E()">Run Report Simulation</button>
+        </div>
+
+        <div id="output" class="output">
+            <h3>API Output:</h3>
+            <pre id="log"></pre>
+        </div>
+
+        <div id="report-view"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+
+        async function runE2E() {
+            const out = document.getElementById('output');
+            const log = document.getElementById('log');
+            const reportView = document.getElementById('report-view');
+            out.style.display = 'block';
+            log.innerText = "Connecting to API...";
+            reportView.innerHTML = "";
+
+            try {
+                // 1. Create Datasource
+                log.innerText += "\n[1/4] Creating Datasource...";
+                let res = await fetch(`${API_URL}/datasources`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: "Test DB", host: "localhost", port: 5432, database: "reporting", username: "admin", password: "password"
+                    })
+                });
+                let ds = await res.json();
+                let dsId = ds.id;
+
+                // 2. Fetch Schema
+                log.innerText += `\n[2/4] Fetching Schema for DS ${dsId}...`;
+                await fetch(`${API_URL}/datasources/${dsId}/schema`);
+
+                // 3. Create Report
+                log.innerText += "\n[3/4] Creating Report (User Orders)...";
+                res = await fetch(`${API_URL}/reports`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: "User Orders",
+                        datasource_id: dsId,
+                        query: { select: ["username"], aggregations: [{type: "SUM", field: "amount"}] },
+                        visualization: "table"
+                    })
+                });
+                let rep = await res.json();
+                let repId = rep.id;
+
+                // 4. Run Report
+                log.innerText += `\n[4/4] Executing Report ${repId}...`;
+                res = await fetch(`${API_URL}/reports/${repId}/run`);
+                let data = await res.json();
+
+                log.innerText += "\n✓ Success!";
+
+                // Render Table
+                let html = '<h2>Report Results</h2><table><thead><tr>';
+                data.columns.forEach(col => html += `<th>${col}</th>`);
+                html += '</tr></thead><tbody>';
+                data.rows.forEach(row => {
+                    html += '<tr>';
+                    row.forEach(val => html += `<td>${val}</td>`);
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                reportView.innerHTML = html;
+
+            } catch (err) {
+                log.innerText += `\nError: ${err.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
