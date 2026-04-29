@@ -1,0 +1,195 @@
+Executive Summary
+
+The optimal architecture for your requirements is Cube Core (semantic layer) + Metabase (BI engine/UI) + a thin orchestration layer (Python/Node). Neither tool alone covers the full scope, but together they provide ~80-85% of the functionality out-of-the-box. The remaining ~15-20% is the orchestration glue that wires up API-key management, routes AI prompts to the LLM, and bridges Metabase's APIs for programmatic report configuration.
+
+Below is an evaluation of the candidate tools, followed by the recommended architecture.
+
+---
+
+1. Tool-by-Tool Evaluation
+
+1.1 Cube Core (cube.dev)
+
+What it is: An open-source, API-first semantic layer that sits between your PostgreSQL database and any consumption tool (BI frontend, custom app, AI agent).
+
+Strengths for your use case:
+
+· Headless & API-first: Exposes REST, GraphQL, and SQL APIs. All functionality is accessible programmatically — no GUI required.
+· Manual BI support: Native support for aggregations, grouping, date filters, and joins through its data schema (cubes, dimensions, measures).
+· AI context provider: Cube’s semantic layer can feed schema/context to LLMs, enabling natural-language-to-SQL generation.
+· Exportability: Query results are returned as structured JSON; raw data can be exported to CSV with minimal effort.
+· Self-hosted & free: MIT-licensed; runs in Docker; no usage limits on the open-source core.
+
+Weaknesses:
+
+· No built-in visualization or dashboarding UI. Cube Core is purely a backend; you must supply your own frontend for charts/dashboards.
+· No built-in AI assistant. AI integration must be built by you (though Cube provides LangChain integration and MCP servers to accelerate this).
+
+Verdict: Cube Core is the ideal backend for your headless reporting engine. It ticks every box except visualization and AI orchestration.
+
+---
+
+1.2 Metabase (Open-Source Edition)
+
+What it is: A full-stack BI platform with a polished UI for non-technical users, plus a REST API for programmatic control.
+
+Strengths for your use case:
+
+· Manual BI out-of-the-box: Drag-and-drop query builder, aggregations, group-by, date filters, joins, and 20+ visualization types — all without writing SQL.
+· AI features (recently open-sourced): Metabase 60+ includes natural language querying (Metabot), SQL generation, and an Agent API. Users can bring their own LLM API key.
+· Exportability: Full support for CSV, JSON, Excel, PNG, and PDF exports; dashboard-level export to PDF; query history and state saving are built in.
+· Self-hosted & free: AGPL-licensed; runs in a single Docker container; no user/seat limits in the OSS edition.
+· REST API: Programmatic access to dashboards, questions, collections, and permissions.
+
+Weaknesses:
+
+· API completeness issues: The Metabase API was not designed as a first-class headless interface. Certain operations (e.g., converting questions to models, complex report creation) are difficult or impossible via the API.
+· Embedding limitations: Full app embedding (interactive embedding) requires a paid license in some configurations. However, static embedding and public links are free.
+· AI depends on Metabase's semantic layer: The AI features work against Metabase's own data model, not Cube's. If you use Cube as your semantic layer, Metabase's AI may not fully leverage it.
+
+Verdict: Metabase is the best frontend BI UI available in open source. Its API is sufficient for basic automation but not for a fully headless architecture. The AI features (BYO-key, natural language queries) directly address your "AI as Edit/Assist" requirement.
+
+---
+
+1.3 DynamicJasper
+
+What it is: A Java library that simplifies the creation of JasperReports templates programmatically.
+
+Why it doesn't fit:
+
+· Not a BI platform. It's a report-generation library for PDF/print-ready output. No interactive dashboards, no ad-hoc querying, no AI integration.
+· No API-first headless architecture. It's a code library, not a service.
+· Heavy lifting required. You would need to build the entire query engine, visualization layer, and API wrapper yourself.
+
+Verdict: Inappropriate for your use case. Avoid.
+
+---
+
+1.4 Alternative Worth Considering: Lightdash
+
+What it is: An open-source BI platform built on top of dbt (data build tool). It offers a semantic layer, visualizations, and AI-powered analytics.
+
+Strengths:
+
+· dbt-native: If your team already uses dbt for data transformations, Lightdash integrates seamlessly.
+· AI agents: Custom AI analysts can answer natural language questions.
+· Headless API: REST API for programmatic access.
+
+Why it's not the top pick:
+
+· dbt dependency: Lightdash assumes a dbt project exists. Without dbt, you must define metrics in YAML, which adds setup complexity.
+· Maturity: Smaller community and less mature API compared to Cube/Metabase.
+
+Verdict: A viable alternative if you already use dbt. Otherwise, Cube + Metabase is simpler and more mature.
+
+---
+
+1.5 Other Tools Briefly Considered
+
+Tool Why Not Recommended
+Apache Superset Powerful REST API and embedding SDK, but AI features are not native; you'd need to build AI integration yourself. More complex to deploy and manage than Metabase.
+Blazer Lightweight SQL-based BI for Ruby on Rails. Too limited; no native AI features.
+Helical Insight Open-source canned reporting. Not API-first; focused on pixel-perfect reports, not interactive BI.
+Graphic Walker Open-source drag-and-drop exploration. No headless API; no AI features.
+
+---
+
+2. Recommended Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                   User's PostgreSQL                       │
+└───────────────────────┬──────────────────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────────┐
+│  Cube Core (Semantic Layer)                               │
+│  - Defines metrics, dimensions, joins                     │
+│  - Exposes REST / GraphQL / SQL APIs                      │
+│  - Caching & pre-aggregations                             │
+│  - Schema context for AI agents                           │
+└───────────────┬──────────────────────────┬───────────────┘
+                │                          │
+                ▼                          ▼
+┌───────────────────────────┐  ┌───────────────────────────┐
+│  Metabase (BI Engine)     │  │  Orchestration Layer       │
+│  - Visualizations         │  │  (Python/Node.js)          │
+│  - Dashboards             │  │  - API-key management      │
+│  - Query Builder          │  │  - AI prompt routing       │
+│  - AI Assistant (Metabot) │  │  - Natural language →      │
+│  - CSV/PDF Export         │  │    Cube query              │
+│  - Query History          │  │  - Programmatic report     │
+│                           │  │    configuration via       │
+│                           │  │    Metabase API            │
+└───────────────────────────┘  └───────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────┐
+│  External LLM (OpenAI / Gemini / Anthropic)               │
+│  - User-provided API key                                  │
+│  - Called by Orchestration Layer                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+Component Responsibilities
+
+Layer Tool What It Provides % Out-of-Box
+Semantic Layer Cube Core API-first query engine; manual BI operations (aggregations, group-by, joins, date filters); schema context for AI. 95%
+BI Frontend Metabase Visualizations, dashboards, CSV export, query history, state saving; optional UI for users who prefer clicks over code. 90%
+AI Orchestration Custom Python/Node (~500–800 lines) Accept user LLM API keys; read Cube schema; prompt LLM with "given this schema, suggest 5 reports" or "translate this natural language into a Cube query"; call Metabase API to create/update the report. 10% (built by you)
+
+---
+
+3. Why This Architecture Hits 90% Out-of-the-Box
+
+Requirement How It's Met
+API-First & Headless Cube Core is natively headless with 3 API protocols. Metabase adds a UI but is optional; the orchestration layer can talk to both Cube and Metabase APIs programmatically.
+Manual BI (aggregations, group-by, joins, date filters) Cube's data schema defines all these operations; Metabase's query builder exposes them visually.
+AI "Edit/Assist" The orchestration layer sends Cube's schema + user prompt to the LLM, receives a Cube query or Metabase configuration, and applies it via API. Metabase's own Metabot can also be used for natural language chart creation.
+Export to CSV Metabase supports CSV export natively; Cube API returns JSON that can be converted to CSV trivially.
+Visualizations & State Saving Metabase provides 20+ chart types, dashboards, and persisted query history.
+Self-Hosted & Single-Tenant Both Cube Core and Metabase OSS run in Docker on the user's infrastructure.
+FOSS Licensing Cube Core: MIT. Metabase OSS: AGPL. Orchestration layer: your own code (MIT).
+Running Costs Only server hosting + user's own LLM API usage. No per-seat or per-query fees.
+
+---
+
+4. What You'll Need to Build (The 10%)
+
+The orchestration layer handles three tasks:
+
+1. API Key Management: Securely store the user's LLM API key and inject it into prompt calls.
+2. AI-to-Cube Bridge: Retrieve the Cube data schema (via Cube's /meta API), format it as context, and send it alongside the user's natural language prompt to the LLM. Parse the LLM's response into a Cube query (JSON) or Metabase API call.
+3. AI-to-Metabase Bridge: Use Metabase's API to programmatically create or update questions, dashboards, or collections based on AI-generated configurations. This is the trickiest part because Metabase's API has gaps; you may need to fall back to direct Cube SQL queries for complex operations.
+
+A reference implementation in Python would be approximately 500–800 lines using FastAPI or Flask.
+
+---
+
+5. Alternative: Lightdash-Only Stack
+
+If you already use dbt and want a single-tool solution, Lightdash is worth evaluating:
+
+Requirement Lightdash Fit
+API-First ✅ REST API
+Manual BI ✅ Visual query builder, joins, filters
+AI Features ✅ Custom AI agents (BYO-key)
+Exportability ✅ CSV, PNG, PDF
+Self-Hosted ✅ Docker, open-source
+Gap AI features are add-ons; the open-source version may have limited AI capabilities compared to Metabase.
+
+Trade-off: Less mature than the Cube+Metabase combo; AI features may require a paid tier.
+
+---
+
+6. Final Recommendation
+
+Use Cube Core + Metabase + a thin orchestration layer. This combination gives you a battle-tested semantic layer (Cube), a polished BI frontend with open-source AI features (Metabase), and just enough custom code to wire everything together. The result is a self-contained, single-tenant Docker Compose stack that satisfies all your functional and licensing constraints.
+
+Estimated effort breakdown:
+
+· Cube Core setup: 1–2 days
+· Metabase setup: 1 day
+· Orchestration layer: 5–7 days
+· Integration testing: 2–3 days
+· Total: ~2 weeks to a working prototype
