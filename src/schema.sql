@@ -1,0 +1,10 @@
+CREATE TABLE customers (customer_id INTEGER PRIMARY KEY,name TEXT,segment TEXT,region TEXT);
+CREATE TABLE products (product_id INTEGER PRIMARY KEY,sku TEXT,category TEXT,price REAL);
+CREATE TABLE orders (order_id INTEGER PRIMARY KEY,customer_id INTEGER,order_date TEXT,FOREIGN KEY(customer_id) REFERENCES customers(customer_id));
+CREATE TABLE order_items (order_item_id INTEGER PRIMARY KEY,order_id INTEGER,product_id INTEGER,quantity INTEGER,amount REAL,FOREIGN KEY(order_id) REFERENCES orders(order_id),FOREIGN KEY(product_id) REFERENCES products(product_id));
+CREATE TABLE analytics.daily_revenue (day TEXT,region TEXT,revenue REAL);
+INSERT INTO customers VALUES (1,'Acme','Enterprise','North'),(2,'Beta','SMB','South'),(3,'Delta','Enterprise','West');
+INSERT INTO products VALUES (1,'A-1','Software',100.0),(2,'B-1','Hardware',300.0),(3,'C-1','Service',150.0);
+INSERT INTO orders VALUES (1,1,'2026-01-01'),(2,2,'2026-01-02'),(3,1,'2026-01-03'),(4,3,'2026-01-04');
+INSERT INTO order_items VALUES (1,1,1,2,200.0),(2,1,3,1,150.0),(3,2,2,1,300.0),(4,3,1,1,100.0),(5,4,2,2,600.0);
+INSERT INTO analytics.daily_revenue VALUES ('2026-01-01','North',350.0),('2026-01-02','South',300.0),('2026-01-03','North',100.0),('2026-01-04','West',600.0);
