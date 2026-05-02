@@ -229,57 +229,154 @@ def build_dynamic_sql(query_config: Dict[str, Any], schema: DatabaseSchema) -> s
 
     return sql
 
-import google.generativeai as genai
+# ─── AI Provider Imports ───────────────────────────────────────────
+from app.ai.providers import (
+    AIProviderConfig, create_provider, get_available_providers, AnthropicProvider
+)
+from app.ai.security import sanitize_schema_for_ai, build_metadata_prompt
+
+
+# ─── AI: Multi-Provider Query Generation ──────────────────────────
 
 @router.post("/ai/generate-query")
-def generate_ai_query(datasource_id: str, prompt: str, api_key: str):
-    # 1. Get Schema
-    schema = get_datasource_schema(datasource_id)
-    
-    # 2. Configure Gemini
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-pro')
-    
-    # 3. Build AI Prompt
-    ai_prompt = f"""
-    You are a SQL and BI expert. Given the database schema below, generate a JSON query configuration that satisfies the user prompt.
-    
-    SCHEMA:
-    {json.dumps(schema)}
-    
-    USER PROMPT:
-    {prompt}
-    
-    RESPONSE FORMAT (JSON ONLY):
-    {{
-        "select": ["column_name1", "column_name2"],
-        "aggregations": [{{ "type": "SUM|COUNT|AVG|MIN|MAX", "field": "column_name" }}],
-        "filters": [{{ "field": "column_name", "operator": "=|>|<|LIKE", "value": "value" }}],
-        "group_by": ["column_name1"]
-    }}
-    
-    Ensure table names are NOT used in the field names, just the column names. 
-    If a join is needed between users and orders, assume the backend handles it.
+async def generate_ai_query(datasource_id: str, prompt: str, api_key: str,
+                             provider: str = "anthropic", model: str = None,
+                             base_url: str = None):
     """
-    
+    Generate SQL query configuration from natural language using AI.
+    Supports: anthropic, deepseek, openai, custom.
+    AI ONLY sees column names and types - never actual data values.
+    """
+    # 1. Get raw schema from datasource
+    raw_schema = get_datasource_schema(datasource_id)
+
+    # 2. SANITIZE - strip all data, keep only metadata (column names + types)
+    safe_schema = sanitize_schema_for_ai(raw_schema)
+    metadata_text = build_metadata_prompt(datasource_id, safe_schema)
+
+    # 3. Create AI provider from config
+    ai_config = AIProviderConfig(
+        provider=provider,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        temperature=0.1,
+    )
+    ai = create_provider(ai_config)
+
+    system_prompt = """You are a SQL and BI expert. You receive ONLY database schema metadata
+(column names and data types). Generate a JSON query configuration.
+Never attempt to access or infer actual data values."""
+
+    user_prompt = f"""{metadata_text}
+
+USER REQUEST: {prompt}
+
+Return ONLY JSON:
+{{
+    "select": ["column1", "column2"],
+    "aggregations": [{{ "type": "SUM|COUNT|AVG|MIN|MAX", "field": "column" }}],
+    "filters": [{{ "field": "column", "operator": "=|>|<|LIKE", "value": "value" }}],
+    "group_by": ["column1"],
+    "explanation": "Brief explanation of what this query does"
+}}
+Use column names only (no table prefixes). Backend handles joins automatically."""
+
     try:
-        response = model.generate_content(ai_prompt)
-        # Extract JSON from response (handling potential markdown formatting)
-        content = response.text
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-        
-        query_config = json.loads(content)
-        
-        # Build SQL for direct use in Metabase
-        sql = build_dynamic_sql(query_config, DatabaseSchema(**schema))
-        query_config["sql"] = sql
-        
-        return query_config
+        result = await ai.generate_json(system_prompt, user_prompt)
+
+        # Build actual SQL
+        sql = build_dynamic_sql(result, DatabaseSchema(**raw_schema))
+        result["sql"] = sql
+
+        return result
     except Exception as e:
-        logger.error(f"AI Generation failed: {e}")
+        logger.error(f"AI generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── AI: List Available Providers ─────────────────────────────────
+
+@router.get("/ai/providers")
+def list_ai_providers():
+    """Return available AI providers and their default models."""
+    return {"providers": get_available_providers()}
+
+
+# ─── AI: Explain Report Data ──────────────────────────────────────
+
+@router.post("/ai/explain-report")
+async def explain_report(report_id: str, api_key: str,
+                          provider: str = "anthropic", model: str = None,
+                          base_url: str = None):
+    """
+    Generate a natural language explanation of a report's data.
+    AI receives aggregate statistics about the report, not raw row data.
+    """
+    # Run the report
+    report_data = run_report(report_id)
+
+    if not report_data.get("rows"):
+        return {"explanation": "No data available in this report to explain."}
+
+    # Build safe summary (aggregates only, no individual rows)
+    columns = report_data["columns"]
+    rows = report_data["rows"]
+    row_count = len(rows)
+
+    # Compute safe aggregates
+    summary = {
+        "row_count": row_count,
+        "columns": columns,
+        "column_summaries": {},
+    }
+
+    for idx, col in enumerate(columns):
+        values = [row[idx] for row in rows if row[idx] is not None]
+        if not values:
+            continue
+
+        col_summary = {"non_null_count": len(values)}
+
+        # Numeric columns: min/max/avg only (no individual values)
+        try:
+            numeric_vals = [float(v) for v in values]
+            col_summary["type"] = "numeric"
+            col_summary["min"] = min(numeric_vals)
+            col_summary["max"] = max(numeric_vals)
+            col_summary["average"] = round(sum(numeric_vals) / len(numeric_vals), 2)
+        except (ValueError, TypeError):
+            # Categorical: top categories only
+            col_summary["type"] = "categorical"
+            from collections import Counter
+            top_cats = Counter([str(v) for v in values]).most_common(5)
+            col_summary["top_categories"] = [{"value": v, "count": c} for v, c in top_cats]
+            col_summary["unique_count"] = len(set(str(v) for v in values))
+
+        summary["column_summaries"][col] = col_summary
+
+    # Build AI prompt with aggregates only
+    ai_config = AIProviderConfig(provider=provider, api_key=api_key, model=model, base_url=base_url)
+    ai = create_provider(ai_config)
+
+    system_prompt = """You are a data analyst. Given aggregate statistics about a report,
+write a clear, insightful explanation of what the data means. Focus on trends,
+patterns, and actionable insights. Use plain language suitable for business users."""
+
+    user_prompt = f"""Report aggregate summary (NO individual data values):
+{json.dumps(summary, indent=2, default=str)}
+
+Explain this data in 3-5 paragraphs. Include:
+1. What the report shows
+2. Key findings and trends
+3. Notable patterns or outliers
+4. Business recommendations based on the data"""
+
+    try:
+        explanation = await ai.generate(system_prompt, user_prompt)
+        return {"explanation": explanation, "summary": summary}
+    except Exception as e:
+        logger.error(f"AI explanation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/reports/{id}/run")
@@ -321,3 +418,408 @@ def run_report(id: str):
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Datasource CRUD ──────────────────────────────────────────────
+
+@router.get("/datasources")
+def list_datasources():
+    """List all configured datasources."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, host, port, database FROM datasources")
+    rows = cur.fetchall()
+    conn.close()
+    return {"datasources": [dict(r) for r in rows]}
+
+
+@router.delete("/datasources/{id}")
+def delete_datasource(id: str):
+    """Delete a datasource and its associated reports."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM reports WHERE datasource_id = ?", (id,))
+    cur.execute("DELETE FROM datasources WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Datasource and associated reports deleted"}
+
+
+@router.post("/datasources/{id}/test")
+def test_datasource_connection(id: str):
+    """Test if a datasource connection is working."""
+    try:
+        conn = get_datasource_connection(id)
+        if isinstance(conn, psycopg2.extensions.connection):
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        else:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        conn.close()
+        return {"status": "ok", "message": "Connection successful"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ─── Report CRUD ──────────────────────────────────────────────────
+
+@router.get("/reports")
+def list_reports():
+    """List all saved reports."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT r.id, r.name, r.datasource_id, r.visualization, d.name as datasource_name "
+                "FROM reports r LEFT JOIN datasources d ON r.datasource_id = d.id")
+    rows = cur.fetchall()
+    conn.close()
+    return {"reports": [dict(r) for r in rows]}
+
+
+@router.get("/reports/{id}")
+def get_report(id: str):
+    """Get a single report by ID."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM reports WHERE id = ?", (id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report = dict(row)
+    report["query"] = json.loads(report["query"])
+    return report
+
+
+@router.delete("/reports/{id}")
+def delete_report(id: str):
+    """Delete a report."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM reports WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Report deleted"}
+
+
+# ─── Report Export Endpoints ──────────────────────────────────────
+
+import io
+import csv
+from fastapi.responses import StreamingResponse
+
+
+def _run_report_for_export(report_id: str):
+    """Internal: run a report and return structured data."""
+    orch_conn = get_orchestration_connection()
+    cur = orch_conn.cursor()
+    cur.execute("SELECT * FROM reports WHERE id = ?", (report_id,))
+    row = cur.fetchone()
+    orch_conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    ds_id = row["datasource_id"]
+    query_config = json.loads(row["query"])
+    schema_data = get_datasource_schema(ds_id)
+    schema = DatabaseSchema(**schema_data)
+    sql = build_dynamic_sql(query_config, schema)
+    conn = get_datasource_connection(ds_id)
+    is_postgres = isinstance(conn, psycopg2.extensions.connection)
+    cur2 = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
+    cur2.execute(sql)
+    results = cur2.fetchall()
+    if not results:
+        conn.close()
+        return {"columns": [], "rows": [], "report_name": row["name"]}
+    columns = [desc[0] for desc in cur2.description] if is_postgres else list(results[0].keys())
+    rows = [list(r) for r in results] if is_postgres else [[r[col] for col in columns] for r in results]
+    conn.close()
+    return {"columns": columns, "rows": rows, "report_name": row["name"]}
+
+
+@router.get("/reports/{id}/export/json")
+def export_report_json(id: str):
+    """Export report data as JSON."""
+    data = _run_report_for_export(id)
+    return {
+        "report_name": data["report_name"],
+        "columns": data["columns"],
+        "rows": data["rows"],
+        "row_count": len(data["rows"]),
+    }
+
+
+@router.get("/reports/{id}/export/csv")
+def export_report_csv(id: str):
+    """Export report data as CSV file download."""
+    data = _run_report_for_export(id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(data["columns"])
+    for row in data["rows"]:
+        writer.writerow(row)
+    output.seek(0)
+    filename = f"{data['report_name'].replace(' ', '_')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/reports/{id}/export/excel")
+def export_report_excel(id: str):
+    """Export report data as Excel (.xlsx) file download."""
+    try:
+        import openpyxl
+    except ImportError:
+        raise HTTPException(status_code=501, detail="openpyxl not installed. Run: pip install openpyxl")
+
+    data = _run_report_for_export(id)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Report Data"
+
+    # Header row with styling
+    header_fill = openpyxl.styles.PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = openpyxl.styles.Font(color="FFFFFF", bold=True)
+    for col_idx, col_name in enumerate(data["columns"], 1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    # Data rows
+    for row_idx, row in enumerate(data["rows"], 2):
+        for col_idx, value in enumerate(row, 1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    # Auto-fit columns
+    for col_idx, col_name in enumerate(data["columns"], 1):
+        max_length = len(str(col_name))
+        for row in data["rows"]:
+            val_len = len(str(row[col_idx - 1])) if row[col_idx - 1] is not None else 0
+            max_length = max(max_length, val_len)
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_length + 2, 50)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"{data['report_name'].replace(' ', '_')}.xlsx"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/reports/{id}/export/pdf")
+def export_report_pdf(id: str):
+    """Export report data as PDF file download."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        raise HTTPException(status_code=501, detail="fpdf2 not installed. Run: pip install fpdf2")
+
+    data = _run_report_for_export(id)
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    # Title
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, data["report_name"], ln=True, align="C")
+    pdf.ln(4)
+
+    # Metadata
+    pdf.set_font("Helvetica", "I", 10)
+    pdf.cell(0, 6, f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Rows: {len(data['rows'])}", ln=True)
+    pdf.ln(6)
+
+    if not data["rows"]:
+        pdf.set_font("Helvetica", "", 12)
+        pdf.cell(0, 10, "No data available.", ln=True)
+    else:
+        # Table header
+        col_width = (pdf.w - 20) / len(data["columns"])
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(37, 99, 235)
+        pdf.set_text_color(255, 255, 255)
+        for col in data["columns"]:
+            pdf.cell(col_width, 8, str(col)[:int(col_width / 1.8)], border=1, fill=True)
+        pdf.ln()
+
+        # Table rows
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(0, 0, 0)
+        for row_idx, row in enumerate(data["rows"]):
+            if row_idx % 2 == 0:
+                pdf.set_fill_color(245, 247, 250)
+            else:
+                pdf.set_fill_color(255, 255, 255)
+            for col_idx, value in enumerate(row):
+                pdf.cell(col_width, 6, str(value)[:int(col_width / 1.8)] if value is not None else "", border=1, fill=True)
+            pdf.ln()
+
+    output = io.BytesIO()
+    pdf.output(output)
+    output.seek(0)
+    filename = f"{data['report_name'].replace(' ', '_')}.pdf"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/reports/{id}/export/word")
+def export_report_word(id: str):
+    """Export report data as Word (.docx) file download."""
+    try:
+        from docx import Document
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        raise HTTPException(status_code=501, detail="python-docx not installed. Run: pip install python-docx")
+
+    data = _run_report_for_export(id)
+
+    doc = Document()
+    doc.styles["Normal"].font.name = "Calibri"
+
+    # Title
+    title = doc.add_heading(data["report_name"], level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Metadata
+    doc.add_paragraph(
+        f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}  |  "
+        f"Total Rows: {len(data['rows'])}"
+    ).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph()
+
+    if not data["rows"]:
+        doc.add_paragraph("No data available for this report.")
+    else:
+        # Create table
+        table = doc.add_table(rows=1, cols=len(data["columns"]))
+        table.style = "Light Grid Accent 1"
+
+        # Headers
+        hdr_cells = table.rows[0].cells
+        for idx, col_name in enumerate(data["columns"]):
+            hdr_cells[idx].text = str(col_name)
+
+        # Data rows
+        for row in data["rows"]:
+            row_cells = table.add_row().cells
+            for idx, value in enumerate(row):
+                row_cells[idx].text = str(value) if value is not None else ""
+
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+    filename = f"{data['report_name'].replace(' ', '_')}.docx"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ─── System / Theme Endpoints ─────────────────────────────────────
+
+THEME_FILE = "theme.json"
+
+DEFAULT_THEME = {
+    "name": "Default Light",
+    "mode": "light",
+    "colors": {
+        "primary": "#2563EB",
+        "secondary": "#7C3AED",
+        "accent": "#F59E0B",
+        "background": "#FFFFFF",
+        "surface": "#F8FAFC",
+        "text": "#1E293B",
+        "textSecondary": "#64748B",
+        "border": "#E2E8F0",
+        "success": "#10B981",
+        "warning": "#F59E0B",
+        "error": "#EF4444",
+        "info": "#3B82F6",
+    },
+    "fonts": {
+        "heading": "Inter",
+        "body": "Inter",
+    },
+    "borderRadius": 8,
+    "logo": None,
+    "branding": {
+        "companyName": "Awesome BI",
+        "tagline": "Intelligent Business Intelligence",
+    },
+}
+
+
+def _load_theme() -> dict:
+    if os.path.exists(THEME_FILE):
+        with open(THEME_FILE, "r") as f:
+            return json.load(f)
+    return DEFAULT_THEME.copy()
+
+
+def _save_theme(theme: dict):
+    with open(THEME_FILE, "w") as f:
+        json.dump(theme, f, indent=2)
+
+
+@router.get("/theme")
+def get_theme():
+    """Get current UI theme configuration."""
+    return _load_theme()
+
+
+@router.put("/theme")
+def update_theme(theme: Dict[str, Any]):
+    """Update UI theme configuration."""
+    current = _load_theme()
+    # Deep merge with current theme
+    def deep_merge(base, update):
+        for key, value in update.items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                deep_merge(base[key], value)
+            else:
+                base[key] = value
+
+    deep_merge(current, theme)
+    _save_theme(current)
+    return {"message": "Theme updated", "theme": current}
+
+
+@router.post("/theme/reset")
+def reset_theme():
+    """Reset theme to defaults."""
+    _save_theme(DEFAULT_THEME.copy())
+    return {"message": "Theme reset to defaults", "theme": DEFAULT_THEME}
+
+
+# ─── Health / Stats ───────────────────────────────────────────────
+
+@router.get("/health/stats")
+def get_stats():
+    """Get system statistics for dashboard."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM datasources")
+    ds_count = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM reports")
+    report_count = cur.fetchone()[0]
+    conn.close()
+    return {
+        "datasources": ds_count,
+        "reports": report_count,
+        "ai_providers": len(get_available_providers()),
+    }

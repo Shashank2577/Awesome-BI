@@ -14,10 +14,24 @@ services:
       - ./backend:/app
     depends_on:
       - db
+
+  # Custom BI Frontend (Next.js) - replaces Metabase
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
+    profiles:
+      - full
+
+  # Legacy: Metabase OSS frontend - replaced by custom frontend
   metabase:
     image: metabase/metabase:latest
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - MB_DB_TYPE=postgres
       - MB_DB_DBNAME=reporting
@@ -27,6 +41,9 @@ services:
       - MB_DB_HOST=db
     depends_on:
       - db
+    profiles:
+      - legacy
+
   db:
     image: postgres:15-alpine
     ports:
