@@ -93,6 +93,17 @@ export async function downloadReport(id: string, format: string) {
   URL.revokeObjectURL(link.href);
 }
 
+/* ── Raw SQL ── */
+
+export async function runRawQuery(datasourceId: string, sql: string) {
+  const searchParams = new URLSearchParams();
+  searchParams.set('datasource_id', datasourceId);
+  searchParams.set('sql', sql);
+  return request<any>(`/query/run?${searchParams.toString()}`, {
+    method: 'POST',
+  });
+}
+
 /* ── AI ── */
 
 export async function listAIProviders() {

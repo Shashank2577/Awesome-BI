@@ -464,6 +464,58 @@ def test_datasource_connection(id: str):
         return {"status": "error", "message": str(e)}
 
 
+# ─── Raw SQL Query Runner ────────────────────────────────────────
+
+@router.post("/query/run")
+def run_raw_query(datasource_id: str, sql: str):
+    """
+    Run a raw SQL query against a datasource.
+    Only SELECT queries are allowed for safety.
+    """
+    # Safety: only allow SELECT statements
+    sql_stripped = sql.strip()
+    sql_upper = sql_stripped.upper()
+
+    # Block dangerous statements
+    dangerous = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE',
+                 'TRUNCATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'MERGE']
+    for keyword in dangerous:
+        if sql_upper.startswith(keyword) or f' {keyword} ' in f' {sql_upper} ':
+            raise HTTPException(
+                status_code=403,
+                detail=f"Only SELECT queries are allowed. Detected: {keyword}"
+            )
+
+    if not sql_upper.startswith('SELECT') and not sql_upper.startswith('WITH'):
+        raise HTTPException(status_code=403, detail="Only SELECT queries are allowed")
+
+    # Run the query
+    conn = get_datasource_connection(datasource_id)
+    is_postgres = isinstance(conn, psycopg2.extensions.connection)
+    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
+
+    try:
+        cur.execute(sql)
+        results = cur.fetchall()
+
+        if not results:
+            conn.close()
+            return {"columns": [], "rows": [], "sql": sql}
+
+        if is_postgres:
+            columns = [desc[0] for desc in cur.description]
+            rows = [list(r) for r in results]
+        else:
+            columns = list(results[0].keys())
+            rows = [[r[col] for col in columns] for r in results]
+
+        conn.close()
+        return {"columns": columns, "rows": rows, "sql": sql, "row_count": len(rows)}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Report CRUD ──────────────────────────────────────────────────
 
 @router.get("/reports")
