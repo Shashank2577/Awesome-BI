@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield } from 'lucide-react';
-import { getReport, runReport, explainReport, exportUrl } from '@/lib/api';
+import { getReport, runReport, explainReport, downloadReport } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -47,28 +47,15 @@ export default function QuestionDetail() {
 
   const doExport = async (fmt:string, includeAiSummary = false) => {
     try {
-      let url = exportUrl(id, fmt);
-      const params = new URLSearchParams();
-      // For PDF/Word, include current chart as image if checkbox checked
+      let chartImg: string | undefined;
       if ((fmt==='pdf'||fmt==='word') && exportChart && viz!=='table' && chartRef.current) {
-        const img = await chartRef.current();
-        if (img) params.set('chart_image', img);
+        chartImg = await chartRef.current() || undefined;
       }
-      // Include AI summary if requested and available
-      if (includeAiSummary && aiExp) {
-        params.set('ai_summary', aiExp);
-      }
-      if ([...params].length > 0) url += '?' + params.toString();
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('Export failed');
-      const blob = await r.blob();
-      const ext = fmt === 'excel' ? 'xlsx' : fmt === 'word' ? 'docx' : fmt;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `report.${ext}`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      const extras = [viz!=='table'?'chart':'', includeAiSummary?'summary':''].filter(Boolean).join(' + ');
+      await downloadReport(id, fmt, {
+        chartImage: chartImg,
+        aiSummary: includeAiSummary && aiExp ? aiExp : undefined,
+      });
+      const extras = [exportChart && viz!=='table'?'chart':'', includeAiSummary?'summary':''].filter(Boolean).join(' + ');
       toast.success(`Exported as ${fmt.toUpperCase()}` + (extras ? ` with ${extras}` : ''));
     } catch(e:any) { toast.error(e.message); }
   };

@@ -30,8 +30,14 @@ export const runRawQuery = (dsId: string, sql: string) => {
 
 /* Exports */
 export const exportUrl = (id: string, fmt: string) => `${API}/reports/${id}/export/${fmt}`;
-export const downloadReport = async (id: string, fmt: string) => {
-  const r = await fetch(exportUrl(id, fmt));
+export const downloadReport = async (id: string, fmt: string, opts?: { chartImage?: string; aiSummary?: string }) => {
+  const url = exportUrl(id, fmt);
+  const hasBody = opts?.chartImage || opts?.aiSummary;
+  const r = await fetch(url, hasBody ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chart_image: opts?.chartImage || null, ai_summary: opts?.aiSummary || null }),
+  } : { method: 'GET' });
   if (!r.ok) throw new Error('Export failed');
   const blob = await r.blob();
   const ext = fmt === 'excel' ? 'xlsx' : fmt === 'word' ? 'docx' : fmt;

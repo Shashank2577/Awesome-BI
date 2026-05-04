@@ -741,15 +741,14 @@ def export_report_excel(id: str):
     )
 
 
-@router.get("/reports/{id}/export/pdf")
-def export_report_pdf(id: str, chart_image: str = None, ai_summary: str = None):
-    """Export report data as PDF file download. Optionally includes chart image (base64 data URL)."""
+def _build_pdf(report_id: str, chart_image: str = None, ai_summary: str = None):
+    """Shared PDF builder used by both GET and POST endpoints."""
     try:
         from fpdf import FPDF
     except ImportError:
         raise HTTPException(status_code=501, detail="fpdf2 not installed. Run: pip install fpdf2")
 
-    data = _run_report_for_export(id)
+    data = _run_report_for_export(report_id)
 
     pdf = FPDF()
     pdf.add_page()
@@ -892,9 +891,22 @@ def export_report_pdf(id: str, chart_image: str = None, ai_summary: str = None):
     )
 
 
-@router.get("/reports/{id}/export/word")
-def export_report_word(id: str, chart_image: str = None, ai_summary: str = None):
-    """Export report data as Word (.docx) file download. Optionally includes chart image."""
+@router.get("/reports/{id}/export/pdf")
+def export_report_pdf_get(id: str, chart_image: str = None, ai_summary: str = None):
+    """GET: Export report as PDF. For large chart/summary, use POST."""
+    return _build_pdf(id, chart_image, ai_summary)
+
+
+@router.post("/reports/{id}/export/pdf")
+def export_report_pdf_post(id: str, body: Dict[str, Any] = None):
+    """POST: Export report as PDF. Accepts chart_image + ai_summary in body (no URL length limit)."""
+    ci = body.get("chart_image") if body else None
+    ai = body.get("ai_summary") if body else None
+    return _build_pdf(id, ci, ai)
+
+
+def _build_word(report_id: str, chart_image: str = None, ai_summary: str = None):
+    """Shared Word builder used by both GET and POST endpoints."""
     try:
         from docx import Document
         from docx.shared import Inches, Pt, RGBColor
@@ -902,7 +914,7 @@ def export_report_word(id: str, chart_image: str = None, ai_summary: str = None)
     except ImportError:
         raise HTTPException(status_code=501, detail="python-docx not installed. Run: pip install python-docx")
 
-    data = _run_report_for_export(id)
+    data = _run_report_for_export(report_id)
 
     doc = Document()
     doc.styles["Normal"].font.name = "Calibri"
@@ -981,6 +993,20 @@ def export_report_word(id: str, chart_image: str = None, ai_summary: str = None)
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/reports/{id}/export/word")
+def export_report_word_get(id: str, chart_image: str = None, ai_summary: str = None):
+    """GET: Export report as Word. For large chart/summary, use POST."""
+    return _build_word(id, chart_image, ai_summary)
+
+
+@router.post("/reports/{id}/export/word")
+def export_report_word_post(id: str, body: Dict[str, Any] = None):
+    """POST: Export report as Word. Accepts chart_image + ai_summary in body (no URL length limit)."""
+    ci = body.get("chart_image") if body else None
+    ai = body.get("ai_summary") if body else None
+    return _build_word(id, ci, ai)
 
 
 # ─── System / Theme Endpoints ─────────────────────────────────────
