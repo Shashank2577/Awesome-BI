@@ -853,34 +853,16 @@ def export_report_pdf(id: str, chart_image: str = None, ai_summary: str = None):
             scale = available_width / sum(col_widths)
             col_widths = [w * scale for w in col_widths]
 
-        # Helper to draw a cell with text wrapping
-        def draw_cell(w, h, text, fill=False, header=False):
-            pdf.set_font("Helvetica", "B" if header else "", 8 if header else 8)
-            text_w = pdf.get_string_width(str(text))
-            if text_w > w - 1:
-                # Truncate with ellipsis if too long
-                truncated = str(text)
-                while pdf.get_string_width(truncated + '…') > w - 1 and len(truncated) > 3:
-                    truncated = truncated[:-1]
-                display = truncated + '…'
-            else:
-                display = str(text)
-            x = pdf.get_x()
-            y = pdf.get_y()
-            if fill:
-                pdf.rect(x, y, w, h, 'F')
-            pdf.rect(x, y, w, h)
-            pdf.set_xy(x + 0.5, y + 0.3)
-            pdf.cell(w - 1, h - 0.6, display)
-
         # Table header
         pdf.set_fill_color(37, 99, 235)
         pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 9)
         for ci, col in enumerate(cols):
-            draw_cell(col_widths[ci], 8, col, fill=True, header=True)
-        pdf.ln(8)
+            pdf.cell(col_widths[ci], 8, str(col), border=1, fill=True)
+        pdf.ln()
 
         # Table rows
+        pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(0, 0, 0)
         for row_idx, row in enumerate(rows):
             if row_idx % 2 == 0:
@@ -889,8 +871,15 @@ def export_report_pdf(id: str, chart_image: str = None, ai_summary: str = None):
                 pdf.set_fill_color(255, 255, 255)
             for ci, value in enumerate(row):
                 display = str(value) if value is not None else ""
-                draw_cell(col_widths[ci], 6, display, fill=True)
-            pdf.ln(6)
+                # Truncate with ellipsis if needed
+                text_w = pdf.get_string_width(display)
+                while text_w > col_widths[ci] - 1 and len(display) > 3:
+                    display = display[:-1]
+                    text_w = pdf.get_string_width(display + '…')
+                if text_w > col_widths[ci] - 1 and len(display) > 3:
+                    display = display + '…'
+                pdf.cell(col_widths[ci], 6, display, border=1, fill=True)
+            pdf.ln()
 
     output = io.BytesIO()
     pdf.output(output)

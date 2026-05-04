@@ -45,17 +45,17 @@ export default function QuestionDetail() {
   const doExport = async (fmt:string, includeAiSummary = false) => {
     try {
       let url = exportUrl(id, fmt);
+      const params = new URLSearchParams();
       // For PDF/Word, include current chart as image
       if ((fmt==='pdf'||fmt==='word') && viz!=='table' && chartRef.current) {
         const img = await chartRef.current();
-        if (img) {
-          url += `&chart_image=${encodeURIComponent(img)}`;
-        }
+        if (img) params.set('chart_image', img);
       }
       // Include AI summary if requested and available
       if (includeAiSummary && aiExp) {
-        url += `&ai_summary=${encodeURIComponent(aiExp)}`;
+        params.set('ai_summary', aiExp);
       }
+      if ([...params].length > 0) url += '?' + params.toString();
       const r = await fetch(url);
       if (!r.ok) throw new Error('Export failed');
       const blob = await r.blob();
