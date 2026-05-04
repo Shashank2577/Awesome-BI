@@ -624,10 +624,17 @@ def _run_report_for_export(report_id: str):
         raise HTTPException(status_code=404, detail="Report not found")
 
     ds_id = row["datasource_id"]
-    query_config = json.loads(row["query"])
-    schema_data = get_datasource_schema(ds_id)
-    schema = DatabaseSchema(**schema_data)
-    sql = build_dynamic_sql(query_config, schema)
+    stored_sql = row["sql"] if "sql" in row.keys() else None
+
+    # Prefer stored SQL over dynamic builder (same as run_report)
+    if stored_sql and stored_sql.strip():
+        sql = _clean_metabase_templates(stored_sql.strip())
+    else:
+        query_config = json.loads(row["query"])
+        schema_data = get_datasource_schema(ds_id)
+        schema = DatabaseSchema(**schema_data)
+        sql = build_dynamic_sql(query_config, schema)
+
     conn = get_datasource_connection(ds_id)
     is_postgres = isinstance(conn, psycopg2.extensions.connection)
     cur2 = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
