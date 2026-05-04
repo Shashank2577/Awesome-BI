@@ -40,3 +40,4 @@ class ReportCreate(BaseModel):
     datasource_id: str
     query: QueryConfig
     visualization: str
+    sql: Optional[str] = None  # Direct SQL that bypasses build_dynamic_sql

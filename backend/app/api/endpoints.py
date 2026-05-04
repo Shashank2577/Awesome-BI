@@ -76,7 +76,12 @@ def init_db():
     orch_conn = get_orchestration_connection()
     orch_cur = orch_conn.cursor()
     orch_cur.execute("CREATE TABLE IF NOT EXISTS datasources (id TEXT PRIMARY KEY, name TEXT, host TEXT, port INTEGER, database TEXT, username TEXT, password TEXT)")
-    orch_cur.execute("CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, name TEXT, datasource_id TEXT, query TEXT, visualization TEXT)")
+    orch_cur.execute("CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, name TEXT, datasource_id TEXT, query TEXT, visualization TEXT, sql TEXT)")
+    # Migration: add sql column to existing table if missing
+    try:
+        orch_cur.execute("ALTER TABLE reports ADD COLUMN sql TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     orch_conn.commit()
     orch_conn.close()
 
@@ -152,80 +157,94 @@ def create_report(report: ReportCreate):
     report_id = str(uuid.uuid4())
     conn = get_orchestration_connection()
     cur = conn.cursor()
-    query_json = json.dumps(report.query.dict())
-    cur.execute("INSERT INTO reports (id, name, datasource_id, query, visualization) VALUES (?, ?, ?, ?, ?)",
-        (report_id, report.name, report.datasource_id, query_json, report.visualization))
+    query_json = json.dumps(report.query.model_dump())
+    cur.execute("INSERT INTO reports (id, name, datasource_id, query, visualization, sql) VALUES (?, ?, ?, ?, ?, ?)",
+        (report_id, report.name, report.datasource_id, query_json, report.visualization, report.sql))
     conn.commit()
     conn.close()
     return {"id": report_id, "message": "Report created successfully"}
 
 def build_dynamic_sql(query_config: Dict[str, Any], schema: DatabaseSchema) -> str:
     """
-    Dynamically builds SQL from QueryConfig, validating against the provided schema.
+    Builds SQL from QueryConfig by introspecting actual database schema.
+    Works with ANY database — auto-detects tables from column references.
     """
     select_fields = query_config.get("select") or []
     aggregations = query_config.get("aggregations") or []
     filters = query_config.get("filters") or []
     group_by = query_config.get("group_by") or []
 
-    # Simple heuristic: find the tables involved. 
-    # For a robust BI tool, we'd need a more complex join logic.
-    # Here we assume a single table or a joined view of users/orders for the demo.
-    
-    table_map = {t.name: [c.name for c in t.columns] for t in schema.tables}
-    
-    # Check if we should join users and orders
-    if "users" in table_map and "orders" in table_map:
-        from_clause = "users LEFT JOIN orders ON users.id = orders.user_id"
-        available_columns = {
-            "username": "users.username",
-            "email": "users.email",
-            "amount": "orders.amount",
-            "status": "orders.status"
-        }
-    else:
-        # Fallback to the first table if no join logic matches
-        table_name = list(table_map.keys())[0] if table_map else "dual"
-        from_clause = table_name
-        available_columns = {c: f"{table_name}.{c}" for c in table_map.get(table_name, [])}
+    # Build column index across ALL tables: col_name -> [(table, full_ref)]
+    col_index: Dict[str, List[tuple]] = {}
+    for table in schema.tables:
+        for col in table.columns:
+            key = col.name.lower()
+            full = f'"{table.name}"."{col.name}"'
+            if key not in col_index:
+                col_index[key] = []
+            col_index[key].append((table.name, full))
 
+    # Collect all referenced columns
+    all_refs = list(select_fields) + [a.get("field", "") for a in aggregations] +                [f.get("field", "") for f in filters] + list(group_by)
+
+    available: Dict[str, str] = {}
+    needed_tables: set = set()
+    for ref in all_refs:
+        if ref and ref.lower() in col_index:
+            entries = col_index[ref.lower()]
+            available[ref] = entries[0][1]
+            needed_tables.add(entries[0][0])
+
+    if not schema.tables:
+        return "SELECT 1"
+
+    # Single table (or none referenced): use that one
+    if len(needed_tables) <= 1:
+        tbl = list(needed_tables)[0] if needed_tables else schema.tables[0].name
+        from_clause = tbl
+    else:
+        # Multi-table: use the one with most column matches as primary
+        scores = {t: sum(1 for r in all_refs if r and r.lower() in col_index
+                   and any(x[0] == t for x in col_index[r.lower()]))
+                   for t in needed_tables}
+        primary = max(scores, key=scores.get)
+        from_clause = primary
+
+    # Build SELECT
     sql_selects = []
     for f in select_fields:
-        if f in available_columns:
-            sql_selects.append(available_columns[f])
-    
+        sql_selects.append(available.get(f, f))
     for agg in aggregations:
-        agg_type = agg.get("type")
-        agg_field = agg.get("field")
-        if agg_field in available_columns:
-            sql_selects.append(f"{agg_type}({available_columns[agg_field]}) as {agg_type.lower()}_{agg_field}")
-
+        agg_type = agg.get("type", "COUNT")
+        agg_field = agg.get("field", "*")
+        col_ref = available.get(agg_field, agg_field)
+        sql_selects.append(f'{agg_type}({col_ref}) as {agg_type.lower()}_{agg_field}')
     if not sql_selects:
         sql_selects = ["*"]
 
     sql = f"SELECT {', '.join(sql_selects)} FROM {from_clause}"
 
+    # WHERE
     where_clauses = []
+    valid_ops = {"=", "!=", ">", "<", ">=", "<=", "LIKE", "IN"}
     for f in filters:
-        field = f.get("field")
-        op = f.get("operator")
+        field = f.get("field", "")
+        op = str(f.get("operator", "=")).upper()
         val = f.get("value")
-        if field in available_columns:
-            # Basic injection prevention for the operator
-            if op.upper() in ["=", "!=", ">", "<", ">=", "<=", "LIKE"]:
-                # In a real tool, use parameterized queries for the value
-                if isinstance(val, str):
-                    where_clauses.append(f"{available_columns[field]} {op} '{val}'")
-                else:
-                    where_clauses.append(f"{available_columns[field]} {op} {val}")
-    
+        if field in available and op in valid_ops:
+            col_ref = available[field]
+            if isinstance(val, str):
+                escaped = val.replace("'", "''")
+                where_clauses.append(f"{col_ref} {op} '{escaped}'")
+            else:
+                where_clauses.append(f"{col_ref} {op} {val}")
     if where_clauses:
         sql += f" WHERE {' AND '.join(where_clauses)}"
 
+    # GROUP BY
     if group_by:
-        gb_fields = [available_columns[f] for f in group_by if f in available_columns]
-        if gb_fields:
-            sql += f" GROUP BY {', '.join(gb_fields)}"
+        gb = [available.get(f, f) for f in group_by]
+        sql += f" GROUP BY {', '.join(gb)}"
 
     return sql
 
@@ -379,6 +398,17 @@ Explain this data in 3-5 paragraphs. Include:
         logger.error(f"AI explanation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _clean_metabase_templates(sql: str) -> str:
+    """Strip Metabase template syntax: [[ ... ]] and {{variable}}."""
+    import re
+    sql = re.sub(r'\[\[.*?\]\]', '', sql)
+    sql = re.sub(r'\{\{.*?\}\}', 'NULL', sql)
+    sql = re.sub(r'WHERE\s+AND', 'WHERE', sql)
+    sql = re.sub(r'WHERE\s+OR', 'WHERE', sql)
+    sql = re.sub(r'\s+', ' ', sql)
+    return sql.strip()
+
+
 @router.get("/reports/{id}/run")
 def run_report(id: str):
     orch_conn = get_orchestration_connection()
@@ -386,23 +416,27 @@ def run_report(id: str):
     orch_cur.execute("SELECT * FROM reports WHERE id = ?", (id,))
     report_row = orch_cur.fetchone()
     orch_conn.close()
-    
+
     if not report_row:
         raise HTTPException(status_code=404, detail="Report not found")
 
     ds_id = report_row["datasource_id"]
     query_config = json.loads(report_row["query"])
-    
-    # Get schema to validate and build query
-    schema_data = get_datasource_schema(ds_id)
-    schema = DatabaseSchema(**schema_data)
-    
-    sql = build_dynamic_sql(query_config, schema)
-    
+    stored_sql = report_row["sql"] if "sql" in report_row.keys() else None
+
+    # Prefer stored SQL (from AI generation or user-written) over dynamic building
+    if stored_sql and stored_sql.strip():
+        sql = _clean_metabase_templates(stored_sql.strip())
+    else:
+        # Fall back to building SQL from query config
+        schema_data = get_datasource_schema(ds_id)
+        schema = DatabaseSchema(**schema_data)
+        sql = build_dynamic_sql(query_config, schema)
+
     conn = get_datasource_connection(ds_id)
     is_postgres = isinstance(conn, psycopg2.extensions.connection)
     cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
-    
+
     try:
         cur.execute(sql)
         results = cur.fetchall()
@@ -517,6 +551,22 @@ def run_raw_query(datasource_id: str, sql: str):
 
 
 # ─── Report CRUD ──────────────────────────────────────────────────
+
+@router.post("/reports/raw", status_code=201)
+def create_report_raw(name: str, datasource_id: str, sql: str, visualization: str = "table"):
+    """Create a report directly from raw SQL (bypasses query config)."""
+    report_id = str(uuid.uuid4())
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    empty_query = json.dumps({})
+    cur.execute(
+        "INSERT INTO reports (id, name, datasource_id, query, visualization, sql) VALUES (?, ?, ?, ?, ?, ?)",
+        (report_id, name, datasource_id, empty_query, visualization, sql),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": report_id, "message": "Report created from raw SQL"}
+
 
 @router.get("/reports")
 def list_reports():
