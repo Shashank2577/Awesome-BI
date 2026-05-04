@@ -14,6 +14,17 @@ const grid = { left:'3%',right:'4%',bottom:'10%',top:'10%',containLabel:true };
 const xa = (cats:string[])=>({type:'category',data:cats,axisLabel:{color:'#64748B',fontSize:11,rotate:cats.length>12?35:0,interval:cats.length>30?Math.floor(cats.length/15):0},axisTick:{show:false},axisLine:{lineStyle:{color:'#E2E8F0'}}});
 const ya = {type:'value',axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}};
 
+// Deduplicate column names for React keys
+function uniqueKeys(cols: string[]): string[] {
+  const seen = new Map<string, number>();
+  return cols.map(c => {
+    const clean = c.trim();
+    const count = seen.get(clean) || 0;
+    seen.set(clean, count + 1);
+    return count === 0 ? clean : `${clean}_${count}`;
+  });
+}
+
 interface Props { type: string; columns: string[]; rows: any[][]; onChartReady?: (fn:()=>Promise<string|null>)=>void; }
 
 function detect(columns:string[],rows:any[][]){
@@ -29,8 +40,9 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
   const catCol=columns[catIdx]||columns[0]; const mCols=metricIdx.map(i=>columns[i]); const pm=mCols[0]||columns[columns.length-1]||columns[0];
   const cats=useMemo(()=>rows.map(r=>String(r[catIdx]??'')),[rows,catIdx]);
   const h=Math.max(350,Math.min(500,rows.length*30));
+  const keys = useMemo(() => uniqueKeys(columns), [columns]);
 
-  if(type==='table')return <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="bg-surface-hover">{columns.map(c=><th key={c} className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted">{c}</th>)}</tr></thead><tbody className="divide-y">{rows.map((r,i)=><tr key={i} className="hover:bg-surface-hover/50">{r.map((c,j)=><td key={j} className="px-4 py-2.5 text-sm">{c===null||c===undefined?<span className="text-muted italic text-xs">—</span>:<span className={typeof c==='number'?'font-mono tabular-nums':''}>{typeof c==='number'?c.toLocaleString():String(c)}</span>}</td>)}</tr>)}</tbody></table></div>;
+  if(type==='table')return <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="bg-surface-hover">{columns.map((c,i)=><th key={keys[i]} className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted">{c}</th>)}</tr></thead><tbody className="divide-y">{rows.map((r,i)=><tr key={i} className="hover:bg-surface-hover/50">{r.map((c,j)=><td key={j} className="px-4 py-2.5 text-sm">{c===null||c===undefined?<span className="text-muted italic text-xs">—</span>:<span className={typeof c==='number'?'font-mono tabular-nums':''}>{typeof c==='number'?c.toLocaleString():String(c)}</span>}</td>)}</tr>)}</tbody></table></div>;
   if(type==='bar'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:48,itemStyle:{borderRadius:[4,4,0,0]}}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
   if(type==='line'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'circle',symbolSize:4,lineStyle:{width:2.5},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
   if(type==='area'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'none',lineStyle:{width:2},areaStyle:{opacity:0.12},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}

@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield } from 'lucide-react';
-import { getReport, runReport, downloadReport, explainReport, exportUrl } from '@/lib/api';
+import { getReport, runReport, explainReport, exportUrl } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -35,6 +35,9 @@ export default function QuestionDetail() {
   const [aiExp, setAiExp] = useState<string|null>(null);
   const [aiCfg, setAiCfg] = useState({ provider:'anthropic',apiKey:'',model:'',baseUrl:'' });
   const [showAiCfg, setShowAiCfg] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportChart, setExportChart] = useState(true);
+  const [exportSummary, setExportSummary] = useState(false);
 
   useEffect(() => { if (report?.visualization && vizOpts.some(o=>o.v===report.visualization)) setViz(report.visualization as Viz); }, [report?.visualization]);
 
@@ -46,8 +49,8 @@ export default function QuestionDetail() {
     try {
       let url = exportUrl(id, fmt);
       const params = new URLSearchParams();
-      // For PDF/Word, include current chart as image
-      if ((fmt==='pdf'||fmt==='word') && viz!=='table' && chartRef.current) {
+      // For PDF/Word, include current chart as image if checkbox checked
+      if ((fmt==='pdf'||fmt==='word') && exportChart && viz!=='table' && chartRef.current) {
         const img = await chartRef.current();
         if (img) params.set('chart_image', img);
       }
@@ -80,26 +83,21 @@ export default function QuestionDetail() {
       <div><h1 className="text-3xl font-bold">{report.name}</h1><p className="text-sm text-muted">{report.datasource_name || report.datasource_id}</p></div>
       <div className="flex items-center gap-2">
         <button onClick={()=>refetch()} className="rounded-lg border p-2 text-muted hover:bg-surface-hover"><RefreshCw className="h-4 w-4"/></button>
-        <div className="relative group">
-          <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90"><Download className="h-4 w-4"/> Export<ChevronDown className="h-3.5 w-3.5"/></button>
-          <div className="absolute right-0 top-full mt-1 hidden group-hover:block rounded-lg border bg-surface p-3 shadow-lg z-10 min-w-[200px] space-y-2">
-            <p className="text-xs font-medium text-muted uppercase tracking-wider px-1">Download Format</p>
-            <div className="grid grid-cols-2 gap-1">
-              {exportFmts.map(e=><button key={e.f} onClick={()=>doExport(e.f)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-hover"><e.i className="h-4 w-4"/>{e.l}</button>)}
+        <div className="relative">
+          <button onClick={() => setExportOpen(!exportOpen)} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90"><Download className="h-4 w-4"/> Export<ChevronDown className={`h-3.5 w-3.5 transition-transform ${exportOpen?'rotate-180':''}`}/></button>
+          {exportOpen && <>
+            <div className="fixed inset-0 z-10" onClick={() => setExportOpen(false)} />
+            <div className="absolute right-0 top-full mt-1 rounded-lg border bg-surface p-4 shadow-xl z-20 w-72 space-y-3">
+              <div className="grid grid-cols-2 gap-1.5">
+                {exportFmts.map(e=><button key={e.f} onClick={() => { doExport(e.f, exportSummary); setExportOpen(false); }} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-hover transition-colors"><e.i className="h-4 w-4 text-primary"/>{e.l}</button>)}
+              </div>
+              <div className="border-t pt-3 space-y-2">
+                <p className="text-xs font-medium text-muted uppercase tracking-wider">Options</p>
+                {viz !== 'table' && <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={exportChart} onChange={e=>setExportChart(e.target.checked)} className="rounded accent-primary"/> Include chart image</label>}
+                {aiExp && <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={exportSummary} onChange={e=>setExportSummary(e.target.checked)} className="rounded accent-primary"/> Include AI analysis</label>}
+              </div>
             </div>
-            {aiExp && <div className="border-t pt-2 mt-1">
-              <label className="flex items-center gap-2 px-1 text-xs text-muted cursor-pointer hover:text-foreground">
-                <input type="checkbox" id="inc-ai-pdf" className="rounded" onChange={(e) => {
-                  const btn = document.getElementById('export-pdf-with-ai');
-                  if (btn) btn.style.display = e.target.checked ? '' : 'none';
-                }}/>
-                Include AI summary in PDF/Word
-              </label>
-              <button id="export-pdf-with-ai" style={{display:'none'}} onClick={()=>doExport('pdf', true)} className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-hover bg-amber-50 text-amber-800">
-                <FileIcon className="h-4 w-4"/> PDF with Chart + AI Summary
-              </button>
-            </div>}
-          </div>
+          </>}
         </div>
       </div>
     </div>
