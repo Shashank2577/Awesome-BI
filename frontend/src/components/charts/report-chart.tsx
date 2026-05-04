@@ -1,10 +1,21 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useRef, useCallback } from 'react';
+import ReactEChartsCore from 'echarts-for-react/lib/core';
+import * as echarts from 'echarts/core';
+import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, Legend,
-} from 'recharts';
+  GridComponent, TooltipComponent, TitleComponent, LegendComponent,
+  ToolboxComponent, DataZoomComponent,
+} from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+
+echarts.use([
+  BarChart, LineChart, PieChart, ScatterChart,
+  GridComponent, TooltipComponent, TitleComponent, LegendComponent,
+  ToolboxComponent, DataZoomComponent, CanvasRenderer,
+]);
+
 import type { VisualizationType } from '@/lib/types';
 
 const COLORS = [
@@ -20,19 +31,14 @@ function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-function truncate(s: string, max: number): string {
-  if (!s) return '';
-  return s.length > max ? s.slice(0, max - 1) + '…' : s;
-}
-
 interface ReportChartProps {
   type: VisualizationType;
   columns: string[];
   rows: (string | number | null)[][];
+  onChartReady?: (getImage: () => Promise<string | null>) => void;
 }
 
-function detectChartColumns(columns: string[], rows: (string | number | null)[][]) {
-  // Determine which columns are category vs metric
+function detectMetrics(columns: string[], rows: (string | number | null)[][]) {
   const numericIdx: number[] = [];
   columns.forEach((_, idx) => {
     const hasNum = rows.some((r) => {
@@ -41,67 +47,44 @@ function detectChartColumns(columns: string[], rows: (string | number | null)[][
     });
     if (hasNum) numericIdx.push(idx);
   });
-
-  // Category = first non-numeric or first column
-  const catIdx = numericIdx.includes(0) && columns.length > 2
-    ? (numericIdx.length >= 2 ? 0 : 0)
-    : 0;
-
-  // Metrics = numeric columns excluding the category column
+  // Category = first column; metrics = rest of numeric columns (excluding first if it's numeric and there are others)
+  const catIdx = 0;
   const metricIdx = numericIdx.filter((i) => i !== catIdx);
-
-  // If we wrongly identified everything as metric, use first col as category
-  if (catIdx === 0 && metricIdx.length === columns.length) {
-    return { catIdx: 0, metricIdx: metricIdx.slice(1) };
-  }
-
-  return { catIdx, metricIdx: metricIdx.length > 0 ? metricIdx : numericIdx };
+  return { catIdx, metricIdx: metricIdx.length > 0 ? metricIdx : (numericIdx.length > 1 ? [numericIdx[numericIdx.length - 1]] : numericIdx) };
 }
 
-const tooltipStyle = {
-  contentStyle: {
-    backgroundColor: '#1E293B',
-    border: '1px solid #334155',
-    borderRadius: '10px',
-    color: '#F1F5F9',
-    fontSize: '13px',
-    boxShadow: '0 10px 25px rgba(0,0,0,0.3)',
-    padding: '10px 14px',
-  },
-  itemStyle: { color: '#E2E8F0', padding: '2px 0' },
-  labelStyle: { color: '#94A3B8', fontWeight: 600, marginBottom: '4px' },
-};
+export function ReportChart({ type, columns, rows, onChartReady }: ReportChartProps) {
+  const chartRef = useRef<any>(null);
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={tooltipStyle.contentStyle}>
-      <p style={tooltipStyle.labelStyle}>{label}</p>
-      {payload.map((entry: any, i: number) => (
-        <p key={i} style={tooltipStyle.itemStyle}>
-          <span style={{ color: entry.color, fontWeight: 700 }}>● </span>
-          {entry.name}: <strong>{typeof entry.value === 'number' ? entry.value.toLocaleString() : entry.value}</strong>
-        </p>
-      ))}
-    </div>
-  );
-};
+  const getChartImage = useCallback(async (): Promise<string | null> => {
+    const instance = chartRef.current?.getEchartsInstance?.();
+    if (!instance) return null;
+    return instance.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#fff' });
+  }, []);
 
-export function ReportChart({ type, columns, rows }: ReportChartProps) {
-  const data = useMemo(() => rows.map((row) => {
-    const item: Record<string, any> = {};
-    columns.forEach((col, idx) => {
-      const val = row[idx];
-      item[col] = val !== null && val !== undefined ? val : null;
-    });
-    return item;
-  }), [columns, rows]);
+  // Expose image capture to parent
+  useMemo(() => {
+    if (onChartReady) onChartReady(getChartImage);
+  }, [onChartReady, getChartImage]);
 
-  const { catIdx, metricIdx } = useMemo(() => detectChartColumns(columns, rows), [columns, rows]);
+  const { catIdx, metricIdx } = useMemo(() => detectMetrics(columns, rows), [columns, rows]);
   const catCol = columns[catIdx] || columns[0];
   const metricCols = metricIdx.map((i) => columns[i]);
   const primaryMetric = metricCols[0] || columns[columns.length - 1] || columns[0];
 
+  const categories = useMemo(() => rows.map((r) => String(r[catIdx] ?? '')), [rows, catIdx]);
+
+  const baseTooltip = {
+    trigger: 'axis' as const,
+    backgroundColor: '#1E293B',
+    borderColor: '#334155',
+    textStyle: { color: '#F1F5F9', fontSize: 13 },
+    axisPointer: { type: 'shadow' as const },
+  };
+
+  const baseGrid = { left: '3%', right: '4%', bottom: '10%', top: '10%', containLabel: true };
+
+  // ── TABLE ──
   if (type === 'table') {
     return (
       <div className="overflow-x-auto rounded-lg border border-border">
@@ -137,171 +120,170 @@ export function ReportChart({ type, columns, rows }: ReportChartProps) {
     );
   }
 
-  const chartHeight = Math.max(350, Math.min(500, data.length * 30));
-
+  // ── BAR ──
   if (type === 'bar') {
-    return (
-      <ResponsiveContainer width="100%" height={chartHeight}>
-        <BarChart data={data} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" strokeOpacity={0.4} vertical={false} />
-          <XAxis
-            dataKey={catCol}
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={{ stroke: '#E2E8F0' }}
-            tickFormatter={(v) => truncate(String(v), 18)}
-            angle={data.length > 12 ? -35 : 0}
-            textAnchor={data.length > 12 ? 'end' : 'middle'}
-            height={data.length > 12 ? 60 : 40}
-            interval={data.length > 30 ? Math.floor(data.length / 15) : 0}
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={formatNumber}
-            width={60}
-          />
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: '#F1F5F9', opacity: 0.5 }} />
-          <Legend
-            wrapperStyle={{ fontSize: '12px', paddingTop: '12px' }}
-            iconType="circle"
-            iconSize={8}
-          />
-          {metricCols.map((col, idx) => (
-            <Bar
-              key={col}
-              dataKey={col}
-              name={col}
-              fill={COLORS[idx % COLORS.length]}
-              radius={[4, 4, 0, 0]}
-              maxBarSize={48}
-            />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
-    );
+    const option = {
+      color: COLORS,
+      tooltip: baseTooltip,
+      legend: { top: 0, textStyle: { color: '#64748B', fontSize: 12 }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+      grid: baseGrid,
+      toolbox: { feature: { saveAsImage: { title: 'Save' } } },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { color: '#64748B', fontSize: 11, rotate: categories.length > 12 ? 35 : 0, interval: categories.length > 30 ? Math.floor(categories.length / 15) : 0 },
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: '#E2E8F0' } },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#64748B', fontSize: 11, formatter: (v: number) => formatNumber(v) },
+        splitLine: { lineStyle: { color: '#E2E8F0', type: 'dashed' } },
+      },
+      series: metricCols.map((col, idx) => ({
+        name: col,
+        type: 'bar',
+        data: rows.map((r) => {
+          const v = r[columns.indexOf(col)];
+          return v === null || v === undefined ? null : Number(v);
+        }),
+        barMaxWidth: 48,
+        itemStyle: { borderRadius: [4, 4, 0, 0] },
+        emphasis: { itemStyle: { borderRadius: [4, 4, 0, 0] } },
+      })),
+    };
+    return <ReactEChartsCore ref={chartRef} echarts={echarts} option={option} style={{ height: Math.max(350, Math.min(500, rows.length * 30)) }} />;
   }
 
+  // ── LINE ──
   if (type === 'line') {
-    return (
-      <ResponsiveContainer width="100%" height={chartHeight}>
-        <LineChart data={data} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" strokeOpacity={0.4} vertical={false} />
-          <XAxis
-            dataKey={catCol}
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={{ stroke: '#E2E8F0' }}
-            tickFormatter={(v) => truncate(String(v), 18)}
-            angle={data.length > 12 ? -35 : 0}
-            textAnchor={data.length > 12 ? 'end' : 'middle'}
-            height={data.length > 12 ? 60 : 40}
-            interval={data.length > 30 ? Math.floor(data.length / 15) : 0}
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={formatNumber}
-            width={60}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '12px' }} iconType="line" iconSize={14} />
-          {metricCols.map((col, idx) => (
-            <Line
-              key={col}
-              type="monotone"
-              dataKey={col}
-              name={col}
-              stroke={COLORS[idx % COLORS.length]}
-              strokeWidth={2.5}
-              dot={{ r: 2, strokeWidth: 2 }}
-              activeDot={{ r: 5, strokeWidth: 0 }}
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    );
+    const option = {
+      color: COLORS,
+      tooltip: baseTooltip,
+      legend: { top: 0, textStyle: { color: '#64748B', fontSize: 12 }, icon: 'roundRect', itemWidth: 14, itemHeight: 4 },
+      grid: baseGrid,
+      toolbox: { feature: { saveAsImage: { title: 'Save' } } },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { color: '#64748B', fontSize: 11, rotate: categories.length > 12 ? 35 : 0 },
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: '#E2E8F0' } },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#64748B', fontSize: 11, formatter: (v: number) => formatNumber(v) },
+        splitLine: { lineStyle: { color: '#E2E8F0', type: 'dashed' } },
+      },
+      series: metricCols.map((col, idx) => ({
+        name: col,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { width: 2.5 },
+        data: rows.map((r) => {
+          const v = r[columns.indexOf(col)];
+          return v === null || v === undefined ? null : Number(v);
+        }),
+      })),
+    };
+    return <ReactEChartsCore ref={chartRef} echarts={echarts} option={option} style={{ height: Math.max(350, Math.min(500, rows.length * 30)) }} />;
   }
 
+  // ── AREA ──
   if (type === 'area') {
-    return (
-      <ResponsiveContainer width="100%" height={chartHeight}>
-        <AreaChart data={data} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" strokeOpacity={0.4} vertical={false} />
-          <XAxis
-            dataKey={catCol}
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={{ stroke: '#E2E8F0' }}
-            tickFormatter={(v) => truncate(String(v), 18)}
-            angle={data.length > 12 ? -35 : 0}
-            textAnchor={data.length > 12 ? 'end' : 'middle'}
-            height={data.length > 12 ? 60 : 40}
-            interval={data.length > 30 ? Math.floor(data.length / 15) : 0}
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: '#64748B' }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={formatNumber}
-            width={60}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '12px' }} iconType="square" iconSize={10} />
-          {metricCols.map((col, idx) => (
-            <Area
-              key={col}
-              type="monotone"
-              dataKey={col}
-              name={col}
-              fill={COLORS[idx % COLORS.length]}
-              stroke={COLORS[idx % COLORS.length]}
-              fillOpacity={0.12}
-              strokeWidth={2}
-            />
-          ))}
-        </AreaChart>
-      </ResponsiveContainer>
-    );
+    const option = {
+      color: COLORS,
+      tooltip: baseTooltip,
+      legend: { top: 0, textStyle: { color: '#64748B', fontSize: 12 }, icon: 'rect', itemWidth: 14, itemHeight: 10 },
+      grid: baseGrid,
+      toolbox: { feature: { saveAsImage: { title: 'Save' } } },
+      xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { color: '#64748B', fontSize: 11, rotate: categories.length > 12 ? 35 : 0 },
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: '#E2E8F0' } },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#64748B', fontSize: 11, formatter: (v: number) => formatNumber(v) },
+        splitLine: { lineStyle: { color: '#E2E8F0', type: 'dashed' } },
+      },
+      series: metricCols.map((col, idx) => ({
+        name: col,
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.12 },
+        data: rows.map((r) => {
+          const v = r[columns.indexOf(col)];
+          return v === null || v === undefined ? null : Number(v);
+        }),
+      })),
+    };
+    return <ReactEChartsCore ref={chartRef} echarts={echarts} option={option} style={{ height: Math.max(350, Math.min(500, rows.length * 30)) }} />;
   }
 
+  // ── PIE ──
   if (type === 'pie') {
-    // For pie, use first col as name, last numeric as value
-    const pieValueCol = primaryMetric;
-    return (
-      <ResponsiveContainer width="100%" height={400}>
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey={pieValueCol}
-            nameKey={catCol}
-            cx="50%"
-            cy="45%"
-            outerRadius={140}
-            innerRadius={40}
-            paddingAngle={2}
-            label={({ name, percent }: { name?: string; percent?: number }) =>
-              (percent ?? 0) > 0.04 ? `${truncate(name ?? '', 15)} ${((percent ?? 0) * 100).toFixed(0)}%` : ''
-            }
-            labelLine={{ stroke: '#94A3B8', strokeWidth: 1 }}
-          >
-            {data.map((_, idx) => (
-              <Cell key={idx} fill={COLORS[idx % COLORS.length]} stroke="#fff" strokeWidth={1} />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip />} />
-          <Legend
-            wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }}
-            iconType="circle"
-            iconSize={8}
-            layout="horizontal"
-          />
-        </PieChart>
-      </ResponsiveContainer>
-    );
+    const pieData = rows.map((r, i) => ({
+      name: String(r[catIdx] ?? ''),
+      value: Number(r[columns.indexOf(primaryMetric)]) || 0,
+    }));
+    const option = {
+      color: COLORS,
+      tooltip: { trigger: 'item' as const, backgroundColor: '#1E293B', borderColor: '#334155', textStyle: { color: '#F1F5F9', fontSize: 13 } },
+      legend: { top: 'bottom', textStyle: { color: '#64748B', fontSize: 11 }, type: 'scroll' as const },
+      toolbox: { feature: { saveAsImage: { title: 'Save' } } },
+      series: [{
+        name: primaryMetric,
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: false,
+        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
+        label: { show: true, formatter: '{b}: {d}%', fontSize: 11 },
+        emphasis: { label: { fontSize: 14, fontWeight: 'bold' } },
+        data: pieData,
+      }],
+    };
+    return <ReactEChartsCore ref={chartRef} echarts={echarts} option={option} style={{ height: 420 }} />;
   }
 
-  return <p className="text-textSecondary text-center py-12">Select a chart type to visualize this data</p>;
+  // ── SCATTER ──
+  if (type === 'scatter') {
+    const scatterData = rows.map((r) => {
+      const x = Number(r[catIdx]);
+      const y = Number(r[columns.indexOf(primaryMetric)]);
+      return isNaN(x) || isNaN(y) ? null : [x, y];
+    }).filter(Boolean);
+    const option = {
+      color: COLORS,
+      tooltip: {
+        trigger: 'item' as const,
+        backgroundColor: '#1E293B',
+        borderColor: '#334155',
+        textStyle: { color: '#F1F5F9', fontSize: 13 },
+        formatter: (params: any) => `${catCol}: ${params.value[0]}<br/>${primaryMetric}: ${params.value[1].toLocaleString()}`,
+      },
+      legend: { top: 0, textStyle: { color: '#64748B', fontSize: 12 } },
+      grid: baseGrid,
+      toolbox: { feature: { saveAsImage: { title: 'Save' } } },
+      xAxis: { type: 'value', name: catCol, nameTextStyle: { color: '#64748B', fontSize: 12 }, axisLabel: { color: '#64748B', fontSize: 11 }, splitLine: { lineStyle: { color: '#E2E8F0', type: 'dashed' } } },
+      yAxis: { type: 'value', name: primaryMetric, nameTextStyle: { color: '#64748B', fontSize: 12 }, axisLabel: { color: '#64748B', fontSize: 11, formatter: (v: number) => formatNumber(v) }, splitLine: { lineStyle: { color: '#E2E8F0', type: 'dashed' } } },
+      series: [{
+        name: `${catCol} vs ${primaryMetric}`,
+        type: 'scatter',
+        data: scatterData,
+        symbolSize: 10,
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } },
+      }],
+    };
+    return <ReactEChartsCore ref={chartRef} echarts={echarts} option={option} style={{ height: 400 }} />;
+  }
+
+  return null;
 }

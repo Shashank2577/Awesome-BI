@@ -2,12 +2,12 @@
 
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft, Table2, BarChart3, LineChart, PieChart, AreaChart, ScatterChart,
   Download, FileJson, FileSpreadsheet, FileText, FileIcon,
-  Sparkles, Loader2, RefreshCw, Code, ChevronDown,
+  Sparkles, Loader2, RefreshCw, Code, ChevronDown, Image,
 } from 'lucide-react';
 import {
   getReport, runReport, downloadReport, explainReport,
@@ -48,6 +48,8 @@ export default function ReportDetailPage() {
     enabled: !!id,
   });
 
+  const chartImageRef = useRef<(() => Promise<string | null>) | null>(null);
+
   const [activeViz, setActiveViz] = useState<VisualizationType>('table');
   const [showSQL, setShowSQL] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -55,6 +57,17 @@ export default function ReportDetailPage() {
     provider: 'anthropic', apiKey: '', model: '', baseUrl: '',
   });
   const [showAiConfig, setShowAiConfig] = useState(false);
+
+  // Sync activeViz with stored report visualization once loaded
+  useEffect(() => {
+    if (report?.visualization && ['table', 'bar', 'line', 'pie', 'area', 'scatter'].includes(report.visualization)) {
+      setActiveViz(report.visualization as VisualizationType);
+    }
+  }, [report?.visualization]);
+
+  const handleChartReady = useCallback((getImage: () => Promise<string | null>) => {
+    chartImageRef.current = getImage;
+  }, []);
 
   const explainMutation = useMutation({
     mutationFn: explainReport,
@@ -67,8 +80,20 @@ export default function ReportDetailPage() {
 
   const handleExport = async (format: string) => {
     try {
+      // For PDF/Word, include chart image if viewing a chart
+      if ((format === 'pdf' || format === 'word') && activeViz !== 'table' && chartImageRef.current) {
+        const imgDataUrl = await chartImageRef.current();
+        if (imgDataUrl) {
+          // Download data + chart image as a combined export
+          // For now, download the data export AND open chart image in new tab
+          const imgWindow = window.open('', '_blank');
+          if (imgWindow) {
+            imgWindow.document.write(`<html><body style="margin:0"><img src="${imgDataUrl}" style="max-width:100%"/></body></html>`);
+          }
+        }
+      }
       await downloadReport(id, format);
-      toast.success('Report exported as ' + format.toUpperCase());
+      toast.success(`Report exported as ${format.toUpperCase()}` + (activeViz !== 'table' ? ' + chart image' : ''));
     } catch (e: any) {
       toast.error('Export failed: ' + e.message);
     }
@@ -160,7 +185,7 @@ export default function ReportDetailPage() {
             <Loader2 className="h-8 w-8 animate-spin text-textSecondary" />
           </div>
         ) : result && result.rows?.length > 0 ? (
-          <ReportChart type={activeViz} columns={result.columns} rows={result.rows} />
+          <ReportChart type={activeViz} columns={result.columns} rows={result.rows} onChartReady={handleChartReady} />
         ) : (
           <div className="flex items-center justify-center py-20 text-textSecondary">
             <p>No data available. Try running the report again.</p>

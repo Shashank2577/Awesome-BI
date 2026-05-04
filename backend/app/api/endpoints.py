@@ -379,17 +379,34 @@ async def explain_report(report_id: str, api_key: str,
     ai = create_provider(ai_config)
 
     system_prompt = """You are a data analyst. Given aggregate statistics about a report,
-write a clear, insightful explanation of what the data means. Focus on trends,
-patterns, and actionable insights. Use plain language suitable for business users."""
+write a clear, insightful explanation using MARKDOWN formatting. Use:
+- ## headings for sections
+- **bold** for key numbers and findings
+- - bullet points for lists
+- > blockquotes for important takeaways
+- `code` for column/field names
+- --- horizontal rules between major sections
+Make it visually scannable and professional."""
 
     user_prompt = f"""Report aggregate summary (NO individual data values):
 {json.dumps(summary, indent=2, default=str)}
 
-Explain this data in 3-5 paragraphs. Include:
-1. What the report shows
-2. Key findings and trends
-3. Notable patterns or outliers
-4. Business recommendations based on the data"""
+Write a markdown-formatted report explanation with these sections:
+
+## Overview
+What this report shows in 2-3 sentences.
+
+## Key Findings
+- Bullet points of the most important patterns with **bold numbers**
+
+## Notable Patterns
+Any outliers, trends, or surprising data points
+
+## Recommendations
+Business actions based on the data
+
+---
+> **Summary:** One-sentence bottom-line takeaway"""
 
     try:
         explanation = await ai.generate(system_prompt, user_prompt)
@@ -725,8 +742,8 @@ def export_report_excel(id: str):
 
 
 @router.get("/reports/{id}/export/pdf")
-def export_report_pdf(id: str):
-    """Export report data as PDF file download."""
+def export_report_pdf(id: str, chart_image: str = None, ai_summary: str = None):
+    """Export report data as PDF file download. Optionally includes chart image (base64 data URL)."""
     try:
         from fpdf import FPDF
     except ImportError:
@@ -748,30 +765,132 @@ def export_report_pdf(id: str):
     pdf.cell(0, 6, f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Rows: {len(data['rows'])}", ln=True)
     pdf.ln(6)
 
+    # Chart image (if provided via base64)
+    if chart_image:
+        try:
+            import base64, tempfile, os
+            # Strip data URL prefix
+            img_data = chart_image
+            if ',' in img_data:
+                img_data = img_data.split(',', 1)[1]
+            img_bytes = base64.b64decode(img_data)
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp.write(img_bytes)
+            tmp.close()
+            pdf.image(tmp.name, x=10, w=pdf.w - 20)
+            os.unlink(tmp.name)
+            pdf.ln(6)
+        except Exception as img_err:
+            logger.warning(f"Chart image embed failed: {img_err}")
+
+    # AI Summary for PDF
+    if ai_summary:
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(37, 99, 235)
+        pdf.cell(0, 8, "AI Analysis", ln=True)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+        import re as _re
+        clean = ai_summary
+        clean = _re.sub(r'^#{1,3} (.+)$', r'\1', clean, flags=_re.MULTILINE)
+        clean = clean.replace('**', '').replace('*', '').replace('`', '')
+        clean = _re.sub(r'\n---+', '\n', clean)
+        paragraphs = [p.strip() for p in clean.split('\n\n') if p.strip()]
+        for para in paragraphs[:8]:
+            if para.startswith('> '):
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(100, 116, 139)
+                pdf.multi_cell(0, 5, para.replace('> ', ''))
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 5, para)
+            pdf.ln(1)
+        pdf.ln(4)
+
     if not data["rows"]:
         pdf.set_font("Helvetica", "", 12)
         pdf.cell(0, 10, "No data available.", ln=True)
     else:
+        # Calculate column widths proportionally based on content
+        cols = data["columns"]
+        rows = data["rows"]
+
+        # Measure max text width per column (approximate: ~2 chars per mm at font size 8)
+        pdf.set_font("Helvetica", "", 8)
+        char_width_mm = 1.8  # approximate mm per character at size 8
+        col_max_chars = []
+        for ci, col in enumerate(cols):
+            max_chars = len(str(col))
+            for row in rows[:100]:  # sample first 100 rows for performance
+                val = str(row[ci]) if row[ci] is not None else ""
+                max_chars = max(max_chars, len(val))
+            col_max_chars.append(min(max_chars, 40))  # cap at 40 chars
+
+        total_chars = sum(col_max_chars)
+        available_width = pdf.w - 20  # 10mm margin each side
+        col_widths = [(c / total_chars) * available_width for c in col_max_chars]
+        # Ensure minimum width
+        col_widths = [max(w, 18) for w in col_widths]
+
+        # If total exceeds page, switch to landscape
+        if sum(col_widths) > available_width:
+            # Scale down proportionally
+            scale = available_width / sum(col_widths)
+            col_widths = [w * scale for w in col_widths]
+
+        # Use landscape if many wide columns
+        if len(cols) > 6 and total_chars > 100:
+            pdf.add_page(orientation='L')
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.cell(0, 10, data["report_name"], ln=True, align="C")
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "I", 10)
+            pdf.cell(0, 6, f"Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Rows: {len(rows)}", ln=True)
+            pdf.ln(6)
+            available_width = pdf.w - 20
+            scale = available_width / sum(col_widths)
+            col_widths = [w * scale for w in col_widths]
+
+        # Helper to draw a cell with text wrapping
+        def draw_cell(w, h, text, fill=False, header=False):
+            pdf.set_font("Helvetica", "B" if header else "", 8 if header else 8)
+            text_w = pdf.get_string_width(str(text))
+            if text_w > w - 1:
+                # Truncate with ellipsis if too long
+                truncated = str(text)
+                while pdf.get_string_width(truncated + '…') > w - 1 and len(truncated) > 3:
+                    truncated = truncated[:-1]
+                display = truncated + '…'
+            else:
+                display = str(text)
+            x = pdf.get_x()
+            y = pdf.get_y()
+            if fill:
+                pdf.rect(x, y, w, h, 'F')
+            pdf.rect(x, y, w, h)
+            pdf.set_xy(x + 0.5, y + 0.3)
+            pdf.cell(w - 1, h - 0.6, display)
+
         # Table header
-        col_width = (pdf.w - 20) / len(data["columns"])
-        pdf.set_font("Helvetica", "B", 9)
         pdf.set_fill_color(37, 99, 235)
         pdf.set_text_color(255, 255, 255)
-        for col in data["columns"]:
-            pdf.cell(col_width, 8, str(col)[:int(col_width / 1.8)], border=1, fill=True)
-        pdf.ln()
+        for ci, col in enumerate(cols):
+            draw_cell(col_widths[ci], 8, col, fill=True, header=True)
+        pdf.ln(8)
 
         # Table rows
-        pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(0, 0, 0)
-        for row_idx, row in enumerate(data["rows"]):
+        for row_idx, row in enumerate(rows):
             if row_idx % 2 == 0:
                 pdf.set_fill_color(245, 247, 250)
             else:
                 pdf.set_fill_color(255, 255, 255)
-            for col_idx, value in enumerate(row):
-                pdf.cell(col_width, 6, str(value)[:int(col_width / 1.8)] if value is not None else "", border=1, fill=True)
-            pdf.ln()
+            for ci, value in enumerate(row):
+                display = str(value) if value is not None else ""
+                draw_cell(col_widths[ci], 6, display, fill=True)
+            pdf.ln(6)
 
     output = io.BytesIO()
     pdf.output(output)
@@ -785,8 +904,8 @@ def export_report_pdf(id: str):
 
 
 @router.get("/reports/{id}/export/word")
-def export_report_word(id: str):
-    """Export report data as Word (.docx) file download."""
+def export_report_word(id: str, chart_image: str = None, ai_summary: str = None):
+    """Export report data as Word (.docx) file download. Optionally includes chart image."""
     try:
         from docx import Document
         from docx.shared import Inches, Pt, RGBColor
@@ -809,6 +928,42 @@ def export_report_word(id: str):
         f"Total Rows: {len(data['rows'])}"
     ).alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph()
+
+    # Chart image (if provided)
+    if chart_image:
+        try:
+            import base64, tempfile, os
+            img_data = chart_image
+            if ',' in img_data:
+                img_data = img_data.split(',', 1)[1]
+            img_bytes = base64.b64decode(img_data)
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp.write(img_bytes)
+            tmp.close()
+            doc.add_picture(tmp.name, width=Inches(5.5))
+            last_paragraph = doc.paragraphs[-1]
+            last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            doc.add_paragraph()
+            os.unlink(tmp.name)
+        except Exception as img_err:
+            logger.warning(f"Chart image embed failed: {img_err}")
+
+    # AI Summary for Word
+    if ai_summary:
+        doc.add_heading("AI Analysis", level=2)
+        import re as _re
+        clean = ai_summary
+        clean = _re.sub(r'^#{1,3} (.+)$', r'\1', clean, flags=_re.MULTILINE)
+        clean = _re.sub(r'\n---+', '\n', clean)
+        paragraphs = [p.strip() for p in clean.split('\n\n') if p.strip()]
+        for para in paragraphs[:8]:
+            if para.startswith('> '):
+                p = doc.add_paragraph(para.replace('> ', ''))
+                p.style = doc.styles['Intense Quote'] if 'Intense Quote' in [s.name for s in doc.styles] else doc.styles['Normal']
+            else:
+                clean_para = para.replace('**', '').replace('*', '').replace('`', '')
+                doc.add_paragraph(clean_para)
+        doc.add_paragraph()
 
     if not data["rows"]:
         doc.add_paragraph("No data available for this report.")

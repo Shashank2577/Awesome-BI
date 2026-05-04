@@ -1,0 +1,28 @@
+{
+  "name": "Default Light",
+  "mode": "light",
+  "colors": {
+    "primary": "#eb24c6",
+    "secondary": "#7C3AED",
+    "accent": "#F59E0B",
+    "background": "#FFFFFF",
+    "surface": "#F8FAFC",
+    "text": "#1E293B",
+    "textSecondary": "#64748B",
+    "border": "#E2E8F0",
+    "success": "#10B981",
+    "warning": "#F59E0B",
+    "error": "#EF4444",
+    "info": "#3B82F6"
+  },
+  "fonts": {
+    "heading": "Inter",
+    "body": "Inter"
+  },
+  "borderRadius": 8,
+  "logo": null,
+  "branding": {
+    "companyName": "Awesome BI",
+    "tagline": "Intelligent Business Intelligence"
+  }
+}
