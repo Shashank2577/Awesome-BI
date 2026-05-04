@@ -2,7 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties } from 'lucide-react';
+import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties, Sigma } from 'lucide-react';
 import { listReports, deleteReport, listDatasources, generateAIQuery, createReport, runRawQuery } from '@/lib/api';
 import toast from 'react-hot-toast';
 
@@ -51,7 +51,10 @@ export default function QuestionsPage() {
     <div className="animate-fade-in space-y-6">
       <div className="flex items-center justify-between">
         <div><h1 className="text-3xl font-bold">Questions</h1><p className="mt-1 text-muted">Ask questions with AI or write your own SQL.</p></div>
-        <button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"><Plus className="h-4 w-4"/> New Question</button>
+        <div className="flex items-center gap-2">
+          <Link href="/questions/notebook" className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:bg-surface-hover transition-colors"><Sigma className="h-4 w-4"/> Notebook</Link>
+          <button onClick={() => setShowBuilder(true)} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"><Plus className="h-4 w-4"/> New Question</button>
+        </div>
       </div>
 
       <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"/>
