@@ -5,6 +5,8 @@ import * as echarts from 'echarts/core';
 import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { PivotTable } from './pivot-table';
+import { NumberCard } from './number-card';
 echarts.use([BarChart, LineChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 const C = ['#2563EB','#7C3AED','#DB2777','#EA580C','#16A34A','#0891B2','#4F46E5','#BE185D','#B45309','#15803D','#0E7490','#6D28D9','#E11D48','#D97706','#059669','#0284C7'];
@@ -48,5 +50,13 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
   if(type==='area'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'none',lineStyle:{width:2},areaStyle:{opacity:0.12},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
   if(type==='pie'){const d=rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0}));const o={color:C,tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11},type:'scroll'},series:[{name:pm,type:'pie',radius:['40%','70%'],center:['50%','45%'],itemStyle:{borderRadius:4,borderColor:'#fff',borderWidth:2},label:{show:true,formatter:'{b}: {d}%',fontSize:11},data:d}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:420}}/>;}
   if(type==='scatter'){const d=rows.map(r=>[Number(r[catIdx]),Number(r[columns.indexOf(pm)])]).filter(p=>!isNaN(p[0])&&!isNaN(p[1]));const o={color:C,tooltip:{...ttip,trigger:'item',formatter:(p:any)=>`${catCol}: ${p.value[0]}<br/>${pm}: ${p.value[1].toLocaleString()}`},legend:{top:0},grid,xAxis:{type:'value',name:catCol,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},yAxis:{type:'value',name:pm,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},series:[{name:`${catCol} vs ${pm}`,type:'scatter',data:d,symbolSize:10}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:400}}/>;}
+  if(type==='pivot') return <PivotTable columns={columns} rows={rows} rowField={0} colField={1} valueField={columns.length-1}/>;
+  if(type==='number'){
+    // Aggregate: sum the last numeric column
+    const total = rows.reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0);
+    const prev = rows.length > 1 ? rows.slice(0, Math.floor(rows.length/2)).reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0) : undefined;
+    const spark = rows.slice(0, 20).map(r=>Number(r[metricIdx[metricIdx.length-1]??columns.length-1])||0);
+    return <NumberCard label={pm} value={total} previousValue={prev} sparkline={spark}/>;
+  }
   return null;
 }

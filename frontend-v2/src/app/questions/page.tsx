@@ -2,15 +2,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2 } from 'lucide-react';
+import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties } from 'lucide-react';
 import { listReports, deleteReport, listDatasources, generateAIQuery, createReport, runRawQuery } from '@/lib/api';
 import toast from 'react-hot-toast';
 
-const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart };
+const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart, pivot: TableProperties, number: Hash };
 const vizList = [
   { v: 'table', l: 'Table', i: Table2 }, { v: 'bar', l: 'Bar', i: BarChart3 },
   { v: 'line', l: 'Line', i: LineChart }, { v: 'pie', l: 'Pie', i: PieChart },
   { v: 'area', l: 'Area', i: AreaChart }, { v: 'scatter', l: 'Scatter', i: ScatterChart },
+  { v: 'pivot', l: 'Pivot', i: TableProperties }, { v: 'number', l: 'KPI', i: Hash },
 ];
 
 export default function QuestionsPage() {
