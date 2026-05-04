@@ -71,16 +71,18 @@ export default function NotebookPage() {
     setPreviewLoading(true);
     try {
       let s = 'SELECT ';
-      if (aggregates.length > 0) {
-        const ap = aggregates.map(a => `${a.function}(${a.column}) AS "${a.alias || a.function.toLowerCase()}"`);
+      const activeAggs = aggregates.filter(a => a.column && a.column.trim());
+      if (activeAggs.length > 0) {
+        const ap = activeAggs.map(a => `${a.function}(${a.column}) AS "${a.alias || a.function.toLowerCase()}"`);
         if (groupBy.length > 0) s += groupBy.join(', ') + ', ' + ap.join(', ');
         else s += ap.join(', ');
       } else if (groupBy.length > 0) {
         s += groupBy.join(', ');
       } else { s += '*'; }
       s += ` FROM ${table}`;
-      if (filters.length > 0) {
-        const wp = filters.map(f => {
+      const activeFilters = filters.filter(f => f.column && f.column.trim());
+      if (activeFilters.length > 0) {
+        const wp = activeFilters.map(f => {
           if (f.operator === 'IS NULL') return `${f.column} IS NULL`;
           if (f.operator === 'IS NOT NULL') return `${f.column} IS NOT NULL`;
           if (f.operator === 'IN') return `${f.column} IN (${f.value})`;
