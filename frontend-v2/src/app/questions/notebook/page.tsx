@@ -8,6 +8,7 @@ import {
   Plus, Trash2, Loader2, Play, Save, BarChart3,
   LineChart, PieChart, AreaChart, ScatterChart,
   Table2, TableProperties, Hash,
+  Gauge, FunnelIcon, Columns3, AlignStartHorizontal,
 } from 'lucide-react';
 import { listDatasources, getSchema, createReport, runRawQuery } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -24,6 +25,8 @@ const VIZ_OPTS = [
   { v: 'line', l: 'Line', i: LineChart }, { v: 'pie', l: 'Pie', i: PieChart },
   { v: 'area', l: 'Area', i: AreaChart }, { v: 'scatter', l: 'Scatter', i: ScatterChart },
   { v: 'pivot', l: 'Pivot', i: TableProperties }, { v: 'number', l: 'KPI', i: Hash },
+  { v: 'gauge', l: 'Gauge', i: Gauge }, { v: 'funnel', l: 'Funnel', i: FunnelIcon },
+  { v: 'combo', l: 'Combo', i: Columns3 }, { v: 'row', l: 'Row', i: AlignStartHorizontal },
 ];
 
 const STEPS: { id: Step; label: string; icon: any }[] = [

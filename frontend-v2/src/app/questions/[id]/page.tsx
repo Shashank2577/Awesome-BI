@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield, Hash, TableProperties } from 'lucide-react';
+import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield, Hash, TableProperties, Gauge, FunnelIcon, Columns3, AlignStartHorizontal } from 'lucide-react';
 import { getReport, runReport, explainReport, downloadReport } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import ReactMarkdown from 'react-markdown';
@@ -15,6 +15,8 @@ const vizOpts = [
   { v: 'line', l: 'Line', i: LineChart }, { v: 'pie', l: 'Pie', i: PieChart },
   { v: 'area', l: 'Area', i: AreaChart }, { v: 'scatter', l: 'Scatter', i: ScatterChart },
   { v: 'pivot', l: 'Pivot', i: TableProperties }, { v: 'number', l: 'KPI', i: Hash },
+  { v: 'gauge', l: 'Gauge', i: Gauge }, { v: 'funnel', l: 'Funnel', i: FunnelIcon },
+  { v: 'combo', l: 'Combo', i: Columns3 }, { v: 'row', l: 'Row', i: AlignStartHorizontal },
 ];
 const exportFmts = [
   { f: 'json', l: 'JSON', i: FileJson }, { f: 'csv', l: 'CSV', i: FileText },
@@ -22,7 +24,7 @@ const exportFmts = [
   { f: 'word', l: 'Word', i: FileText },
 ];
 
-type Viz = 'table'|'bar'|'line'|'pie'|'area'|'scatter'|'pivot'|'number';
+type Viz = 'table'|'bar'|'line'|'pie'|'area'|'scatter'|'pivot'|'number'|'gauge'|'funnel'|'combo'|'row';
 
 export default function QuestionDetail() {
   const params = useParams(); const id = params.id as string;

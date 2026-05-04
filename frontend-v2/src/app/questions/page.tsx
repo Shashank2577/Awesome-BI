@@ -2,16 +2,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties, Sigma } from 'lucide-react';
+import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties, Sigma, Gauge, FunnelIcon, Columns3, AlignStartHorizontal } from 'lucide-react';
 import { listReports, deleteReport, listDatasources, generateAIQuery, createReport, runRawQuery } from '@/lib/api';
 import toast from 'react-hot-toast';
 
-const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart, pivot: TableProperties, number: Hash };
+const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart, pivot: TableProperties, number: Hash, gauge: Gauge, funnel: FunnelIcon, combo: Columns3, row: AlignStartHorizontal };
 const vizList = [
   { v: 'table', l: 'Table', i: Table2 }, { v: 'bar', l: 'Bar', i: BarChart3 },
   { v: 'line', l: 'Line', i: LineChart }, { v: 'pie', l: 'Pie', i: PieChart },
   { v: 'area', l: 'Area', i: AreaChart }, { v: 'scatter', l: 'Scatter', i: ScatterChart },
   { v: 'pivot', l: 'Pivot', i: TableProperties }, { v: 'number', l: 'KPI', i: Hash },
+  { v: 'gauge', l: 'Gauge', i: Gauge }, { v: 'funnel', l: 'Funnel', i: FunnelIcon },
+  { v: 'combo', l: 'Combo', i: Columns3 }, { v: 'row', l: 'Row', i: AlignStartHorizontal },
 ];
 
 export default function QuestionsPage() {

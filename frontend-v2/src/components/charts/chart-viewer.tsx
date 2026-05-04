@@ -2,12 +2,12 @@
 import { useMemo, useRef, useCallback } from 'react';
 import ReactEChartsCore from 'echarts-for-react/lib/core';
 import * as echarts from 'echarts/core';
-import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components';
+import { BarChart, LineChart, PieChart, ScatterChart, GaugeChart, FunnelChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent, LegendComponent, DatasetComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { PivotTable } from './pivot-table';
 import { NumberCard } from './number-card';
-echarts.use([BarChart, LineChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, PieChart, ScatterChart, GaugeChart, FunnelChart, GridComponent, TooltipComponent, LegendComponent, DatasetComponent, CanvasRenderer]);
 
 const C = ['#2563EB','#7C3AED','#DB2777','#EA580C','#16A34A','#0891B2','#4F46E5','#BE185D','#B45309','#15803D','#0E7490','#6D28D9','#E11D48','#D97706','#059669','#0284C7'];
 const fmt = (n:number)=>Math.abs(n)>=1e9?(n/1e9).toFixed(1)+'B':Math.abs(n)>=1e6?(n/1e6).toFixed(1)+'M':Math.abs(n)>=1e3?(n/1e3).toFixed(1)+'K':n.toLocaleString();
@@ -16,15 +16,9 @@ const grid = { left:'3%',right:'4%',bottom:'10%',top:'10%',containLabel:true };
 const xa = (cats:string[])=>({type:'category',data:cats,axisLabel:{color:'#64748B',fontSize:11,rotate:cats.length>12?35:0,interval:cats.length>30?Math.floor(cats.length/15):0},axisTick:{show:false},axisLine:{lineStyle:{color:'#E2E8F0'}}});
 const ya = {type:'value',axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}};
 
-// Deduplicate column names for React keys
 function uniqueKeys(cols: string[]): string[] {
-  const seen = new Map<string, number>();
-  return cols.map(c => {
-    const clean = c.trim();
-    const count = seen.get(clean) || 0;
-    seen.set(clean, count + 1);
-    return count === 0 ? clean : `${clean}_${count}`;
-  });
+  const seen = new Map<string,number>();
+  return cols.map(c => { const clean = c.trim(); const count = seen.get(clean)||0; seen.set(clean,count+1); return count===0?clean:`${clean}_${count}`; });
 }
 
 interface Props { type: string; columns: string[]; rows: any[][]; onChartReady?: (fn:()=>Promise<string|null>)=>void; }
@@ -44,19 +38,63 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
   const h=Math.max(350,Math.min(500,rows.length*30));
   const keys = useMemo(() => uniqueKeys(columns), [columns]);
 
+  // TABLE
   if(type==='table')return <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="bg-surface-hover">{columns.map((c,i)=><th key={keys[i]} className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted">{c}</th>)}</tr></thead><tbody className="divide-y">{rows.map((r,i)=><tr key={i} className="hover:bg-surface-hover/50">{r.map((c,j)=><td key={j} className="px-4 py-2.5 text-sm">{c===null||c===undefined?<span className="text-muted italic text-xs">—</span>:<span className={typeof c==='number'?'font-mono tabular-nums':''}>{typeof c==='number'?c.toLocaleString():String(c)}</span>}</td>)}</tr>)}</tbody></table></div>;
+
+  // BAR
   if(type==='bar'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:48,itemStyle:{borderRadius:[4,4,0,0]}}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+
+  // LINE
   if(type==='line'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'circle',symbolSize:4,lineStyle:{width:2.5},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+
+  // AREA
   if(type==='area'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'none',lineStyle:{width:2},areaStyle:{opacity:0.12},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+
+  // PIE
   if(type==='pie'){const d=rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0}));const o={color:C,tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11},type:'scroll'},series:[{name:pm,type:'pie',radius:['40%','70%'],center:['50%','45%'],itemStyle:{borderRadius:4,borderColor:'#fff',borderWidth:2},label:{show:true,formatter:'{b}: {d}%',fontSize:11},data:d}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:420}}/>;}
+
+  // SCATTER
   if(type==='scatter'){const d=rows.map(r=>[Number(r[catIdx]),Number(r[columns.indexOf(pm)])]).filter(p=>!isNaN(p[0])&&!isNaN(p[1]));const o={color:C,tooltip:{...ttip,trigger:'item',formatter:(p:any)=>`${catCol}: ${p.value[0]}<br/>${pm}: ${p.value[1].toLocaleString()}`},legend:{top:0},grid,xAxis:{type:'value',name:catCol,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},yAxis:{type:'value',name:pm,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},series:[{name:`${catCol} vs ${pm}`,type:'scatter',data:d,symbolSize:10}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:400}}/>;}
+
+  // PIVOT
   if(type==='pivot') return <PivotTable columns={columns} rows={rows} rowField={0} colField={1} valueField={columns.length-1}/>;
+
+  // NUMBER / KPI
   if(type==='number'){
-    // Aggregate: sum the last numeric column
     const total = rows.reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0);
-    const prev = rows.length > 1 ? rows.slice(0, Math.floor(rows.length/2)).reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0) : undefined;
-    const spark = rows.slice(0, 20).map(r=>Number(r[metricIdx[metricIdx.length-1]??columns.length-1])||0);
+    const prev = rows.length>1?rows.slice(0,Math.floor(rows.length/2)).reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0):undefined;
+    const spark = rows.slice(0,20).map(r=>Number(r[metricIdx[metricIdx.length-1]??columns.length-1])||0);
     return <NumberCard label={pm} value={total} previousValue={prev} sparkline={spark}/>;
   }
+
+  // GAUGE — single value as gauge dial
+  if(type==='gauge'){
+    const total = rows.reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0);
+    const max = Math.max(total*1.5, 100);
+    const o={series:[{type:'gauge',min:0,max,progress:{show:true,width:16,itemStyle:{color:C[0]}},axisLine:{lineStyle:{width:16}},axisTick:{show:false},splitLine:{show:false},axisLabel:{show:false},detail:{valueAnimation:true,formatter:'{value}',fontSize:36,fontWeight:'bold',color:'#1E293B'},data:[{value:total,name:pm}],title:{fontSize:14,color:'#64748B'}}]};
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:350}}/>;
+  }
+
+  // FUNNEL
+  if(type==='funnel'){
+    const d = rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0})).sort((a,b)=>b.value-a.value);
+    const o={tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11}},series:[{name:pm,type:'funnel',left:'10%',width:'80%',sort:'descending',gap:2,label:{show:true,position:'inside',formatter:'{b}'},data:d.map((x,i)=>({...x,itemStyle:{color:C[i% C.length]}}))}]};
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:400}}/>;
+  }
+
+  // COMBO — bar + line dual-axis
+  if(type==='combo'){
+    const barCol = mCols[0]||pm;
+    const lineCol = mCols[1]||pm;
+    const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:[{...ya},{...ya,axisLabel:{...ya.axisLabel,formatter:(v:number)=>fmt(v)}}],series:[{name:barCol,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(barCol)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:36},mCols.length>1?{name:lineCol,type:'line',yAxisIndex:1,smooth:true,data:rows.map(r=>{const v=r[columns.indexOf(lineCol)];return v===null||v===undefined?null:Number(v)}),lineStyle:{width:3}}:null].filter(Boolean)};
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;
+  }
+
+  // ROW — horizontal bar
+  if(type==='row'){
+    const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:ya,yAxis:{type:'category',data:cats,axisLabel:{color:'#64748B',fontSize:11},axisTick:{show:false},axisLine:{lineStyle:{color:'#E2E8F0'}}},series:mCols.map((c,i)=>({name:c,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:24,itemStyle:{borderRadius:[0,4,4,0]}}))};
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:Math.max(350,rows.length*28)}}/>;
+  }
+
   return null;
 }
