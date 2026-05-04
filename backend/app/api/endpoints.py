@@ -77,6 +77,8 @@ def init_db():
     orch_cur = orch_conn.cursor()
     orch_cur.execute("CREATE TABLE IF NOT EXISTS datasources (id TEXT PRIMARY KEY, name TEXT, host TEXT, port INTEGER, database TEXT, username TEXT, password TEXT)")
     orch_cur.execute("CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, name TEXT, datasource_id TEXT, query TEXT, visualization TEXT, sql TEXT)")
+    orch_cur.execute("CREATE TABLE IF NOT EXISTS dashboards (id TEXT PRIMARY KEY, name TEXT, description TEXT)")
+    orch_cur.execute("CREATE TABLE IF NOT EXISTS dashboard_cards (id TEXT PRIMARY KEY, dashboard_id TEXT, report_id TEXT, row INTEGER, col INTEGER, width INTEGER DEFAULT 4, height INTEGER DEFAULT 3)")
     # Migration: add sql column to existing table if missing
     try:
         orch_cur.execute("ALTER TABLE reports ADD COLUMN sql TEXT")
@@ -1007,6 +1009,72 @@ def export_report_word_post(id: str, body: Dict[str, Any] = None):
     ci = body.get("chart_image") if body else None
     ai = body.get("ai_summary") if body else None
     return _build_word(id, ci, ai)
+
+
+# ─── Dashboard CRUD ──────────────────────────────────────────────
+
+@router.post("/dashboards", status_code=201)
+def create_dashboard(name: str, description: str = ""):
+    dash_id = str(uuid.uuid4())
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO dashboards (id, name, description) VALUES (?, ?, ?)", (dash_id, name, description))
+    conn.commit()
+    conn.close()
+    return {"id": dash_id, "message": "Dashboard created"}
+
+@router.get("/dashboards")
+def list_dashboards():
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT d.*, (SELECT count(*) FROM dashboard_cards c WHERE c.dashboard_id = d.id) as card_count FROM dashboards d")
+    rows = cur.fetchall()
+    conn.close()
+    return {"dashboards": [dict(r) for r in rows]}
+
+@router.get("/dashboards/{id}")
+def get_dashboard(id: str):
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM dashboards WHERE id = ?", (id,))
+    dash = cur.fetchone()
+    if not dash:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    cur.execute("SELECT * FROM dashboard_cards WHERE dashboard_id = ? ORDER BY row, col", (id,))
+    cards = cur.fetchall()
+    conn.close()
+    return {"dashboard": dict(dash), "cards": [dict(c) for c in cards]}
+
+@router.delete("/dashboards/{id}")
+def delete_dashboard(id: str):
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM dashboard_cards WHERE dashboard_id = ?", (id,))
+    cur.execute("DELETE FROM dashboards WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    return {"message": "Dashboard deleted"}
+
+@router.post("/dashboards/{id}/cards", status_code=201)
+def add_card_to_dashboard(id: str, report_id: str, row: int = 0, col: int = 0, width: int = 4, height: int = 3):
+    card_id = str(uuid.uuid4())
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO dashboard_cards (id, dashboard_id, report_id, row, col, width, height) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (card_id, id, report_id, row, col, width, height))
+    conn.commit()
+    conn.close()
+    return {"id": card_id, "message": "Card added to dashboard"}
+
+@router.delete("/dashboards/{dashboard_id}/cards/{card_id}")
+def remove_card_from_dashboard(dashboard_id: str, card_id: str):
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM dashboard_cards WHERE id = ? AND dashboard_id = ?", (card_id, dashboard_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Card removed"}
 
 
 # ─── System / Theme Endpoints ─────────────────────────────────────

@@ -58,7 +58,15 @@ export const explainReport = (params: Record<string, string>) => {
   return req<any>(`/ai/explain-report?${qs}`, { method: 'POST' });
 };
 
+/* Dashboards */
+export const listDashboards = () => req<{ dashboards: any[] }>('/dashboards').then(d => d.dashboards);
+export const getDashboard = (id: string) => req<any>(`/dashboards/${id}`);
+export const createDashboard = (name: string, desc = '') => req(`/dashboards?name=${encodeURIComponent(name)}&description=${encodeURIComponent(desc)}`, { method: 'POST' });
+export const deleteDashboard = (id: string) => req(`/dashboards/${id}`, { method: 'DELETE' });
+export const addCardToDashboard = (dashId: string, reportId: string, row: number, col: number) => req(`/dashboards/${dashId}/cards?report_id=${reportId}&row=${row}&col=${col}`, { method: 'POST' });
+export const removeCard = (dashId: string, cardId: string) => req(`/dashboards/${dashId}/cards/${cardId}`, { method: 'DELETE' });
+
 /* Theme */
 export const getTheme = () => req<any>('/theme');
 export const updateTheme = (t: any) => req('/theme', { method: 'PUT', body: JSON.stringify(t) });
-export const getStats = () => req<{ datasources: number; reports: number }>('/health/stats');
+export const getStats = () => req<{ datasources: number; reports: number; dashboards: number }>('/health/stats');

@@ -1,11 +1,12 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Database, MessageSquare, Settings, Zap, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
+import { LayoutDashboard, Home, Database, MessageSquare, Settings, Zap, ChevronLeft, ChevronRight, HelpCircle, PieChart } from 'lucide-react';
 import { useState } from 'react';
 
 const nav = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Home', icon: Home },
+  { href: '/dashboards', label: 'Dashboards', icon: PieChart },
   { href: '/questions', label: 'Questions', icon: MessageSquare },
   { href: '/database', label: 'Database', icon: Database },
   { href: '/settings', label: 'Settings', icon: Settings },
