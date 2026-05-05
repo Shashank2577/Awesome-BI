@@ -1,10 +1,10 @@
 'use client';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield, Hash, TableProperties, Gauge, FunnelIcon, Columns3, AlignStartHorizontal, Server, Database } from 'lucide-react';
-import { getReport, runReport, explainReport, downloadReport, getReportDatasources, getCompatibleDatasources, linkDatasourceToReport } from '@/lib/api';
+import { getReport, runReport, explainReport, downloadReport, getReportDatasources, getCompatibleDatasources, linkDatasourceToReport, listDatasources, unlinkDatasourceFromReport } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -47,6 +47,9 @@ export default function QuestionDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportChart, setExportChart] = useState(true);
   const [exportSummary, setExportSummary] = useState(false);
+  const [showLinkDs, setShowLinkDs] = useState(false);
+  const { data: allDs } = useQuery({ queryKey: ['all-ds'], queryFn: listDatasources, enabled: showLinkDs });
+  const qc = useQueryClient();
 
   // Auto-discover compatible datasources (dev/QA/prod with same schema)
   useEffect(() => {
@@ -90,18 +93,40 @@ export default function QuestionDetail() {
       <div><h1 className="text-3xl font-bold">{report.name}</h1>
         <div className="flex items-center gap-2 mt-1">
           <Database className="h-3.5 w-3.5 text-muted"/>
-          {(availableDs && availableDs.length > 1) ? (
-            <select value={activeDsId || ''} onChange={e => { setActiveDsId(e.target.value || null); }}
-              className="text-sm text-muted bg-transparent border border-border rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer">
-              <option value="">Default ({report.datasource_name || report.datasource_id})</option>
-              {availableDs.map((ds: any) => (
-                <option key={ds.id} value={ds.id}>{ds.name} ({ds.host}/{ds.database})</option>
-              ))}
-            </select>
-          ) : (
-            <span className="text-sm text-muted">{report.datasource_name || report.datasource_id}</span>
-          )}
+          <select value={activeDsId || ''} onChange={e => { setActiveDsId(e.target.value || null); }}
+            className="text-sm text-muted bg-transparent border border-border rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer">
+            {(availableDs||[]).map((ds: any) => (
+              <option key={ds.id} value={ds.id}>{ds.name}</option>
+            ))}
+          </select>
+          <button onClick={() => setShowLinkDs(!showLinkDs)} className="text-xs text-primary hover:underline ml-1">+ Link</button>
           {dl && <Loader2 className="h-3 w-3 animate-spin text-muted"/>}
+
+          {/* Link datasource modal */}
+          {showLinkDs && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setShowLinkDs(false)}>
+            <div className="rounded-xl border bg-surface p-6 shadow-2xl w-96 max-h-96 overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <h3 className="font-semibold mb-3">Link Environment</h3>
+              <p className="text-xs text-muted mb-3">Select databases to run this question against.</p>
+              <div className="space-y-1">
+                {(allDs||[]).map((ds: any) => {
+                  const isLinked = (availableDs||[]).some(d => d.id === ds.id);
+                  return <button key={ds.id}
+                    onClick={async () => {
+                      if (isLinked) {
+                        await unlinkDatasourceFromReport(id, ds.id);
+                      } else {
+                        await linkDatasourceToReport(id, ds.id);
+                      }
+                      qc.invalidateQueries({ queryKey: ['report-ds', id] });
+                    }}
+                    className={`w-full text-left rounded-lg border px-3 py-2 text-sm flex items-center justify-between ${isLinked ? 'border-primary bg-primary/5 text-primary' : 'hover:bg-surface-hover'}`}>
+                    <span>{ds.name} <span className="text-xs text-muted">({ds.host}/{ds.database})</span></span>
+                    {isLinked ? <span className="text-xs text-green-600">✓ linked</span> : <span className="text-xs text-muted">+ add</span>}
+                  </button>;
+                })}
+              </div>
+            </div>
+          </div>}
         </div>
       </div>
       <div className="flex items-center gap-2">
