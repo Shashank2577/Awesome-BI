@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Plus, Search, Sparkles, Terminal, Shield, Loader2, Play, Eye, Trash2, FileText, BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Hash, TableProperties, Sigma, Gauge, FunnelIcon, Columns3, AlignStartHorizontal } from 'lucide-react';
 import { listReports, deleteReport, listDatasources, generateAIQuery, createReport, runRawQuery } from '@/lib/api';
+import { SQLEditor } from '@/components/charts/sql-editor';
 import toast from 'react-hot-toast';
 
 const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart, pivot: TableProperties, number: Hash, gauge: Gauge, funnel: FunnelIcon, combo: Columns3, row: AlignStartHorizontal };
@@ -125,10 +126,7 @@ export default function QuestionsPage() {
               <p className="text-sm text-muted">Only <strong>SELECT</strong> queries allowed.</p>
               <select value={sqlDs} onChange={e=>setSqlDs(e.target.value)} className="w-full rounded-lg border bg-background px-3 py-2 text-sm">
                 <option value="">— Select datasource —</option>{(dss||[]).map((d:any)=><option key={d.id} value={d.id}>{d.name}</option>)}</select>
-              <div className="rounded-lg border border-border bg-gray-950 overflow-hidden">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900 border-b border-gray-800"><span className="text-xs text-gray-400 font-mono">SQL Editor</span><span className="text-xs text-gray-500">SELECT only</span></div>
-                <textarea value={sql} onChange={e=>setSql(e.target.value)} rows={8} placeholder="SELECT * FROM users" spellCheck={false} className="w-full bg-transparent px-4 py-3 text-sm font-mono text-green-400 placeholder:text-gray-600 focus:outline-none resize-y"/>
-              </div>
+              <SQLEditor value={sql} onChange={setSql} onRun={()=>sqlMut.mutate({dsId:sqlDs,sql})} placeholder="SELECT * FROM users" height="200px"/>
               <div className="flex gap-3">
                 <button onClick={()=>sqlMut.mutate({dsId:sqlDs,sql})} disabled={!sqlDs||!sql.trim()||sqlMut.isPending} className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{sqlMut.isPending?<Loader2 className="h-4 w-4 animate-spin"/>:<Play className="h-4 w-4"/>} Run</button>
                 <button onClick={()=>{setSql('');setSqlResult(null);}} className="rounded-lg border px-4 py-2 text-sm">Clear</button>

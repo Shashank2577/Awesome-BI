@@ -11,6 +11,7 @@ import {
   Gauge, FunnelIcon, Columns3, AlignStartHorizontal,
 } from 'lucide-react';
 import { listDatasources, getSchema, createReport, runRawQuery } from '@/lib/api';
+import { SQLEditor } from '@/components/charts/sql-editor';
 import toast from 'react-hot-toast';
 
 type Step = 'data' | 'filter' | 'summarize' | 'group' | 'visualize';

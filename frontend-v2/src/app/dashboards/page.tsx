@@ -106,7 +106,7 @@ export default function DashboardsPage() {
 
 function DashboardCard({ card, dashId, onRemove }: { card: any; dashId: string; onRemove: () => void }) {
   const { data: report } = useQuery({ queryKey: ['report', card.report_id], queryFn: () => import('@/lib/api').then(m => m.getReport(card.report_id)) });
-  const { data: result } = useQuery({ queryKey: ['result', card.report_id], queryFn: () => import('@/lib/api').then(m => m.runReport(card.report_id)), enabled: !!card.report_id });
+  const { data: result } = useQuery({ queryKey: ['result', card.report_id], queryFn: () => import('@/lib/api').then(m => m.runReport(card.report_id)), enabled: !!card.report_id, refetchInterval: 30000 });
 
   return <div className="rounded-lg border bg-background p-3 min-h-[250px] relative group">
     <div className="flex items-center justify-between mb-2">
