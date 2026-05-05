@@ -21,14 +21,14 @@ function uniqueKeys(cols: string[]): string[] {
   return cols.map(c => { const clean = c.trim(); const count = seen.get(clean)||0; seen.set(clean,count+1); return count===0?clean:`${clean}_${count}`; });
 }
 
-interface Props { type: string; columns: string[]; rows: any[][]; onChartReady?: (fn:()=>Promise<string|null>)=>void; }
+interface Props { type: string; columns: string[]; rows: any[][]; onChartReady?: (fn:()=>Promise<string|null>)=>void; onDrillThrough?: (category: string, value: number) => void; }
 
 function detect(columns:string[],rows:any[][]){
   const ni:number[]=[]; columns.forEach((_,i)=>{if(rows.some(r=>{const v=r[i];return v!==null&&v!==undefined&&!isNaN(Number(v))&&typeof v!=='boolean';}))ni.push(i);});
   return {catIdx:0,metricIdx:ni.filter(i=>i!==0).length>0?ni.filter(i=>i!==0):ni.length>1?[ni[ni.length-1]]:ni};
 }
 
-export function ChartViewer({type,columns,rows,onChartReady}:Props){
+export function ChartViewer({type,columns,rows,onChartReady,onDrillThrough}:Props){
   const ref = useRef<any>(null);
   const getImg = useCallback(async()=>{const i=ref.current?.getEchartsInstance?.();return i?i.getDataURL({type:'png',pixelRatio:2,backgroundColor:'#fff'}):null;},[]);
   useMemo(()=>{onChartReady?.(getImg);},[onChartReady,getImg]);
@@ -38,23 +38,29 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
   const h=Math.max(350,Math.min(500,rows.length*30));
   const keys = useMemo(() => uniqueKeys(columns), [columns]);
 
+  const clickEvents = useMemo(() => onDrillThrough ? {
+    click: (params: any) => {
+      if (params.name) onDrillThrough(String(params.name), Number(params.value) || 0);
+    }
+  } : undefined, [onDrillThrough]);
+
   // TABLE
   if(type==='table')return <div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="bg-surface-hover">{columns.map((c,i)=><th key={keys[i]} className="px-4 py-3 text-left text-xs font-semibold uppercase text-muted">{c}</th>)}</tr></thead><tbody className="divide-y">{rows.map((r,i)=><tr key={i} className="hover:bg-surface-hover/50">{r.map((c,j)=><td key={j} className="px-4 py-2.5 text-sm">{c===null||c===undefined?<span className="text-muted italic text-xs">—</span>:<span className={typeof c==='number'?'font-mono tabular-nums':''}>{typeof c==='number'?c.toLocaleString():String(c)}</span>}</td>)}</tr>)}</tbody></table></div>;
 
   // BAR
-  if(type==='bar'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:48,itemStyle:{borderRadius:[4,4,0,0]}}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+  if(type==='bar'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:48,itemStyle:{borderRadius:[4,4,0,0]}}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:h}}/>;}
 
   // LINE
-  if(type==='line'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'circle',symbolSize:4,lineStyle:{width:2.5},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+  if(type==='line'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'circle',symbolSize:4,lineStyle:{width:2.5},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:h}}/>;}
 
   // AREA
-  if(type==='area'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'none',lineStyle:{width:2},areaStyle:{opacity:0.12},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;}
+  if(type==='area'){const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:ya,series:mCols.map((c,i)=>({name:c,type:'line',smooth:true,symbol:'none',lineStyle:{width:2},areaStyle:{opacity:0.12},data:rows.map(r=>{const v=r[columns.indexOf(c)];return v===null||v===undefined?null:Number(v)})}))};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:h}}/>;}
 
   // PIE
-  if(type==='pie'){const d=rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0}));const o={color:C,tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11},type:'scroll'},series:[{name:pm,type:'pie',radius:['40%','70%'],center:['50%','45%'],itemStyle:{borderRadius:4,borderColor:'#fff',borderWidth:2},label:{show:true,formatter:'{b}: {d}%',fontSize:11},data:d}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:420}}/>;}
+  if(type==='pie'){const d=rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0}));const o={color:C,tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11},type:'scroll'},series:[{name:pm,type:'pie',radius:['40%','70%'],center:['50%','45%'],itemStyle:{borderRadius:4,borderColor:'#fff',borderWidth:2},label:{show:true,formatter:'{b}: {d}%',fontSize:11},data:d}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:420}}/>;}
 
   // SCATTER
-  if(type==='scatter'){const d=rows.map(r=>[Number(r[catIdx]),Number(r[columns.indexOf(pm)])]).filter(p=>!isNaN(p[0])&&!isNaN(p[1]));const o={color:C,tooltip:{...ttip,trigger:'item',formatter:(p:any)=>`${catCol}: ${p.value[0]}<br/>${pm}: ${p.value[1].toLocaleString()}`},legend:{top:0},grid,xAxis:{type:'value',name:catCol,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},yAxis:{type:'value',name:pm,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},series:[{name:`${catCol} vs ${pm}`,type:'scatter',data:d,symbolSize:10}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:400}}/>;}
+  if(type==='scatter'){const d=rows.map(r=>[Number(r[catIdx]),Number(r[columns.indexOf(pm)])]).filter(p=>!isNaN(p[0])&&!isNaN(p[1]));const o={color:C,tooltip:{...ttip,trigger:'item',formatter:(p:any)=>`${catCol}: ${p.value[0]}<br/>${pm}: ${p.value[1].toLocaleString()}`},legend:{top:0},grid,xAxis:{type:'value',name:catCol,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},yAxis:{type:'value',name:pm,nameTextStyle:{color:'#64748B'},axisLabel:{color:'#64748B',fontSize:11,formatter:(v:number)=>fmt(v)},splitLine:{lineStyle:{color:'#E2E8F0',type:'dashed'}}},series:[{name:`${catCol} vs ${pm}`,type:'scatter',data:d,symbolSize:10}]};return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:400}}/>;}
 
   // PIVOT
   if(type==='pivot') return <PivotTable columns={columns} rows={rows} rowField={0} colField={1} valueField={columns.length-1}/>;
@@ -72,14 +78,14 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
     const total = rows.reduce((s,r)=>{const v=Number(r[metricIdx[metricIdx.length-1]??columns.length-1]);return s+(isNaN(v)?0:v);},0);
     const max = Math.max(total*1.5, 100);
     const o={series:[{type:'gauge',min:0,max,progress:{show:true,width:16,itemStyle:{color:C[0]}},axisLine:{lineStyle:{width:16}},axisTick:{show:false},splitLine:{show:false},axisLabel:{show:false},detail:{valueAnimation:true,formatter:'{value}',fontSize:36,fontWeight:'bold',color:'#1E293B'},data:[{value:total,name:pm}],title:{fontSize:14,color:'#64748B'}}]};
-    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:350}}/>;
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:350}}/>;
   }
 
   // FUNNEL
   if(type==='funnel'){
     const d = rows.map(r=>({name:String(r[catIdx]??''),value:Number(r[columns.indexOf(pm)])||0})).sort((a,b)=>b.value-a.value);
     const o={tooltip:{...ttip,trigger:'item'},legend:{top:'bottom',textStyle:{color:'#64748B',fontSize:11}},series:[{name:pm,type:'funnel',left:'10%',width:'80%',sort:'descending',gap:2,label:{show:true,position:'inside',formatter:'{b}'},data:d.map((x,i)=>({...x,itemStyle:{color:C[i% C.length]}}))}]};
-    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:400}}/>;
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:400}}/>;
   }
 
   // COMBO — bar + line dual-axis
@@ -87,7 +93,7 @@ export function ChartViewer({type,columns,rows,onChartReady}:Props){
     const barCol = mCols[0]||pm;
     const lineCol = mCols[1]||pm;
     const o={color:C,tooltip:{...ttip,trigger:'axis'},legend:{top:0,textStyle:{color:'#64748B',fontSize:12}},grid,xAxis:xa(cats),yAxis:[{...ya},{...ya,axisLabel:{...ya.axisLabel,formatter:(v:number)=>fmt(v)}}],series:[{name:barCol,type:'bar',data:rows.map(r=>{const v=r[columns.indexOf(barCol)];return v===null||v===undefined?null:Number(v)}),barMaxWidth:36},mCols.length>1?{name:lineCol,type:'line',yAxisIndex:1,smooth:true,data:rows.map(r=>{const v=r[columns.indexOf(lineCol)];return v===null||v===undefined?null:Number(v)}),lineStyle:{width:3}}:null].filter(Boolean)};
-    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} style={{height:h}}/>;
+    return <ReactEChartsCore ref={ref} echarts={echarts} option={o} onEvents={clickEvents} style={{height:h}}/>;
   }
 
   // ROW — horizontal bar

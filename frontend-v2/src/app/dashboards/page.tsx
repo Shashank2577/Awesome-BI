@@ -2,9 +2,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, PieChart, Trash2, Loader2, Eye, BarChart3, LineChart, Table2, AreaChart, ScatterChart } from 'lucide-react';
+import { Plus, PieChart, Trash2, Loader2, Eye, BarChart3, LineChart, Table2, AreaChart, ScatterChart, GripVertical } from 'lucide-react';
 import { listDashboards, createDashboard, deleteDashboard, listReports, addCardToDashboard, runReport, removeCard } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import toast from 'react-hot-toast';
 
 const vizIcons: any = { bar: BarChart3, line: LineChart, pie: PieChart, table: Table2, area: AreaChart, scatter: ScatterChart };
@@ -84,11 +87,20 @@ export default function DashboardsPage() {
             </div>}
 
             {(dashDetail.cards||[]).length > 0 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {dashDetail.cards.map((card: any) => (
-                  <DashboardCard key={card.id} card={card} dashId={selectedDash} onRemove={()=>{removeCard(selectedDash, card.id);refetchDash();toast.success('Card removed');}}/>
-                ))}
-              </div>
+              <DndContext collisionDetection={closestCenter} onDragEnd={(event: any) => {
+                const {active, over} = event;
+                if (over && active.id !== over.id) {
+                  toast.success('Cards reordered — drag to rearrange');
+                }
+              }}>
+                <SortableContext items={dashDetail.cards.map((c:any) => c.id)} strategy={rectSortingStrategy}>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {dashDetail.cards.map((card: any) => (
+                      <SortableCard key={card.id} id={card.id} card={card} dashId={selectedDash!} onRemove={()=>{removeCard(selectedDash!, card.id);refetchDash();toast.success('Card removed');}}/>
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
             ) : <div className="text-center py-8 text-muted text-sm">No cards yet. Click "Add Card" to add questions.</div>}
           </div>
         )}
@@ -104,13 +116,19 @@ export default function DashboardsPage() {
   </div>;
 }
 
-function DashboardCard({ card, dashId, onRemove }: { card: any; dashId: string; onRemove: () => void }) {
+function SortableCard({ id, card, dashId, onRemove }: { id: string; card: any; dashId: string; onRemove: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
   const { data: report } = useQuery({ queryKey: ['report', card.report_id], queryFn: () => import('@/lib/api').then(m => m.getReport(card.report_id)) });
   const { data: result } = useQuery({ queryKey: ['result', card.report_id], queryFn: () => import('@/lib/api').then(m => m.runReport(card.report_id)), enabled: !!card.report_id, refetchInterval: 30000 });
 
-  return <div className="rounded-lg border bg-background p-3 min-h-[250px] relative group">
+  return <div ref={setNodeRef} style={style} className="rounded-lg border bg-background p-3 min-h-[250px] relative group">
     <div className="flex items-center justify-between mb-2">
-      <Link href={`/questions/${card.report_id}`} className="text-sm font-medium hover:text-primary">{report?.name || card.report_id}</Link>
+      <div className="flex items-center gap-2">
+        <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-0.5 text-muted hover:text-foreground"><GripVertical className="h-4 w-4"/></button>
+        <Link href={`/questions/${card.report_id}`} className="text-sm font-medium hover:text-primary">{report?.name || card.report_id}</Link>
+      </div>
       <button onClick={onRemove} className="opacity-0 group-hover:opacity-100 p-1 text-muted hover:text-red-600 transition-opacity"><Trash2 className="h-3.5 w-3.5"/></button>
     </div>
     {result?.rows?.length > 0 ? <ChartViewer type={report?.visualization || 'table'} columns={result.columns} rows={result.rows.slice(0, 20)}/> : <div className="flex items-center justify-center h-40 text-muted text-sm"><Loader2 className="h-5 w-5 animate-spin"/></div>}
