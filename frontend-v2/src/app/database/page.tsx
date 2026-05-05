@@ -1,8 +1,8 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Database, Plus, Trash2, Loader2, Eye, EyeOff, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import { listDatasources, createDatasource, deleteDatasource, getSchema } from '@/lib/api';
+import { Database, Plus, Trash2, Loader2, Eye, EyeOff, RefreshCw, CheckCircle, XCircle, Search } from 'lucide-react';
+import { listDatasources, createDatasource, deleteDatasource, getSchema, discoverDatabases } from '@/lib/api';
 import toast from 'react-hot-toast';
 
 export default function DatabasePage() {
@@ -13,6 +13,8 @@ export default function DatabasePage() {
   const [expanded, setExpanded] = useState<string|null>(null);
   const [schema, setSchema] = useState<any>(null);
   const [testResults, setTestResults] = useState<Record<string,{status:string;message:string}>>({});
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredDbs, setDiscoveredDbs] = useState<string[] | null>(null);
 
   const createMut = useMutation({ mutationFn: createDatasource, onSuccess:()=>{qc.invalidateQueries({queryKey:['datasources']});setShowForm(false);toast.success('Connected!');}, onError:(e:Error)=>toast.error(e.message) });
   const delMut = useMutation({ mutationFn: deleteDatasource, onSuccess:()=>{qc.invalidateQueries({queryKey:['datasources']});toast.success('Removed');}, onError:(e:Error)=>toast.error(e.message) });
@@ -36,13 +38,31 @@ export default function DatabasePage() {
     {showForm && <div className="rounded-xl border bg-surface p-6 space-y-4">
       <h2 className="text-lg font-semibold">New Connection</h2>
       <div className="grid grid-cols-2 gap-4">
-        {[{k:'name',p:'Name'},{k:'host',p:'Host'},{k:'port',p:'Port',t:'number'},{k:'database',p:'Database'},{k:'username',p:'Username'},{k:'password',p:'Password',tp:'password'}].map(f=>
-          <div key={f.k}><label className="block text-sm font-medium mb-1">{f.p}</label>
-            <input type={f.tp||'text'} value={(form as any)[f.k]} onChange={e=>setForm({...form,[f.k]:f.t==='number'?parseInt(e.target.value):e.target.value})} className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/>
+        <div><label className="block text-sm font-medium mb-1">Name</label><input type="text" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. COD Prod" className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/></div>
+        <div><label className="block text-sm font-medium mb-1">Host</label><input type="text" value={form.host} onChange={e=>setForm({...form,host:e.target.value})} placeholder="host.com" className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/></div>
+        <div><label className="block text-sm font-medium mb-1">Port</label><input type="number" value={form.port} onChange={e=>setForm({...form,port:parseInt(e.target.value)||5432})} className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/></div>
+        <div><label className="block text-sm font-medium mb-1">Username</label><input type="text" value={form.username} onChange={e=>setForm({...form,username:e.target.value})} className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/></div>
+        <div><label className="block text-sm font-medium mb-1">Password</label><input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/></div>
+        <div>
+          <label className="block text-sm font-medium mb-1">Database</label>
+          <div className="flex gap-2">
+            <input type="text" value={form.database} onChange={e=>setForm({...form,database:e.target.value})} placeholder="dbname" className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"/>
+            <button onClick={async ()=>{
+              if(!form.host||!form.username){toast.error('Enter host and username first');return;}
+              setDiscovering(true);setDiscoveredDbs(null);
+              try{const r=await discoverDatabases(form.host,form.port,form.username,form.password);setDiscoveredDbs(r.databases);toast.success(`Found ${r.databases.length} databases`);}
+              catch(e:any){toast.error(e.message);}
+              finally{setDiscovering(false);}
+            }} disabled={discovering} className="rounded-lg border px-3 py-2 text-sm hover:bg-surface-hover disabled:opacity-50 whitespace-nowrap">
+              {discovering?<Loader2 className="h-4 w-4 animate-spin"/>:<><Search className="h-4 w-4 inline mr-1"/>Discover</>}
+            </button>
           </div>
-        )}
+          {discoveredDbs && <div className="mt-2 flex flex-wrap gap-1.5">
+            {discoveredDbs.map(db=><button key={db} onClick={()=>setForm({...form,database:db})} className={`rounded-md border px-2 py-0.5 text-xs transition-colors ${form.database===db?'border-primary bg-primary/10 text-primary':'border-border text-muted hover:border-primary/50'}`}>{db}</button>)}
+          </div>}
+        </div>
       </div>
-      <div className="flex gap-3"><button onClick={()=>createMut.mutate(form)} disabled={createMut.isPending||!form.name} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{createMut.isPending?<Loader2 className="h-4 w-4 animate-spin"/>:'Connect'}</button><button onClick={()=>setShowForm(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button></div>
+      <div className="flex gap-3"><button onClick={()=>createMut.mutate(form)} disabled={createMut.isPending||!form.name||!form.host||!form.database} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{createMut.isPending?<Loader2 className="h-4 w-4 animate-spin"/>:'Connect'}</button><button onClick={()=>{setShowForm(false);setDiscoveredDbs(null);}} className="rounded-lg border px-4 py-2 text-sm">Cancel</button></div>
     </div>}
 
     {isLoading ? <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-muted"/></div>

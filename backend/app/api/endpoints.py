@@ -519,6 +519,23 @@ def test_datasource_connection(id: str):
         return {"status": "error", "message": str(e)}
 
 
+@router.post("/datasources/discover")
+def discover_databases(host: str, port: int = 5432, username: str = "", password: str = ""):
+    """Connect to a PostgreSQL server and list all available databases (no data accessed)."""
+    try:
+        conn = psycopg2.connect(
+            host=host, port=port, database="postgres",
+            user=username, password=password, connect_timeout=10
+        )
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        dbs = [r[0] for r in cur.fetchall()]
+        conn.close()
+        return {"databases": dbs, "count": len(dbs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Connection failed: {str(e)}")
+
+
 # ─── Raw SQL Query Runner ────────────────────────────────────────
 
 @router.post("/query/run")

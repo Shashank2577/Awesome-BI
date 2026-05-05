@@ -11,6 +11,8 @@ export const listDatasources = () => req<{ datasources: any[] }>('/datasources')
 export const createDatasource = (ds: any) => req('/datasources', { method: 'POST', body: JSON.stringify(ds) });
 export const getSchema = (id: string) => req<any>(`/datasources/${id}/schema`);
 export const deleteDatasource = (id: string) => req(`/datasources/${id}`, { method: 'DELETE' });
+export const discoverDatabases = (host: string, port: number, username: string, password: string) =>
+  req<{ databases: string[] }>(`/datasources/discover?host=${encodeURIComponent(host)}&port=${port}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, { method: 'POST' });
 
 /* Reports / Questions */
 export const listReports = () => req<{ reports: any[] }>('/reports').then(d => d.reports);
