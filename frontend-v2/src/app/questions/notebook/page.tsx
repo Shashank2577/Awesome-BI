@@ -1,6 +1,6 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -57,7 +57,7 @@ export default function NotebookPage() {
   const [preview, setPreview] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  const { data: schema } = useQuery({
+  const { data: schema, isLoading: schemaLoading, isError: schemaError } = useQuery({
     queryKey: ['schema', dsId],
     queryFn: () => getSchema(dsId),
     enabled: !!dsId,
@@ -65,6 +65,14 @@ export default function NotebookPage() {
 
   const currentTable = schema?.tables?.find((t: any) => t.name === table);
   const columns = currentTable?.columns || [];
+  const tablesList = schema?.tables || [];
+
+  // Auto-select first table when schema loads with exactly 1 table
+  useEffect(() => {
+    if (tablesList.length === 1 && !table) {
+      setTable(tablesList[0].name);
+    }
+  }, [tablesList, table]);
 
   const buildQuery = useCallback(async () => {
     if (!dsId || !table) return;
@@ -133,9 +141,13 @@ export default function NotebookPage() {
               <div><label className="text-xs text-muted">Datasource</label>
                 <select value={dsId} onChange={e=>{setDsId(e.target.value);setTable('');}} className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1">
                   <option value="">— Select —</option>{(dss||[]).map((d:any)=><option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
-              <div><label className="text-xs text-muted">Table</label>
-                <select value={table} onChange={e=>setTable(e.target.value)} disabled={!schema} className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1 disabled:opacity-50">
-                  <option value="">— Select —</option>{schema?.tables?.map((t:any)=><option key={t.name} value={t.name}>{t.name}</option>)}</select></div>
+              <div><label className="text-xs text-muted">Table {schemaLoading && '(loading...)'}</label>
+                <select value={table} onChange={e=>setTable(e.target.value)} disabled={schemaLoading || schemaError || tablesList.length===0} className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1 disabled:opacity-50">
+                  {schemaLoading && <option>Loading tables...</option>}
+                  {schemaError && <option>Failed to load</option>}
+                  {!schemaLoading && !schemaError && <option value="">— {tablesList.length} table{tablesList.length!==1?'s':''} —</option>}
+                  {!schemaLoading && tablesList.map((t:any)=><option key={t.name} value={t.name}>{t.name} ({t.columns?.length||0} cols)</option>)}
+                </select></div>
             </div>
             {table && columns.length > 0 && <div className="rounded-lg border bg-background p-3">
               <p className="text-xs text-muted mb-2">{columns.length} columns</p>
