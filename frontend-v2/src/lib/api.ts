@@ -17,7 +17,11 @@ export const listReports = () => req<{ reports: any[] }>('/reports').then(d => d
 export const getReport = (id: string) => req<any>(`/reports/${id}`);
 export const createReport = (r: any) => req('/reports', { method: 'POST', body: JSON.stringify(r) });
 export const deleteReport = (id: string) => req(`/reports/${id}`, { method: 'DELETE' });
-export const runReport = (id: string) => req<any>(`/reports/${id}/run`);
+export const runReport = (id: string, dsId?: string) => req<any>(`/reports/${id}/run${dsId ? `?datasource_id=${encodeURIComponent(dsId)}` : ''}`);
+export const getReportDatasources = (id: string) => req<{ datasources: any[] }>(`/reports/${id}/datasources`).then(d => d.datasources);
+export const linkDatasourceToReport = (reportId: string, dsId: string) => req(`/reports/${reportId}/datasources?datasource_id=${encodeURIComponent(dsId)}`, { method: 'POST' });
+export const unlinkDatasourceFromReport = (reportId: string, dsId: string) => req(`/reports/${reportId}/datasources/${dsId}`, { method: 'DELETE' });
+export const getCompatibleDatasources = (dsId: string) => req<{ compatible: any[] }>(`/datasources/compatible?reference_ds_id=${encodeURIComponent(dsId)}`).then(d => d.compatible);
 export const createReportRaw = (params: Record<string, string>) => {
   const qs = new URLSearchParams(params).toString();
   return req(`/reports/raw?${qs}`, { method: 'POST' });

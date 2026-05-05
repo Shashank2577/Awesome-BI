@@ -77,6 +77,7 @@ def init_db():
     orch_cur = orch_conn.cursor()
     orch_cur.execute("CREATE TABLE IF NOT EXISTS datasources (id TEXT PRIMARY KEY, name TEXT, host TEXT, port INTEGER, database TEXT, username TEXT, password TEXT)")
     orch_cur.execute("CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, name TEXT, datasource_id TEXT, query TEXT, visualization TEXT, sql TEXT)")
+    orch_cur.execute("CREATE TABLE IF NOT EXISTS report_datasources (report_id TEXT, datasource_id TEXT, PRIMARY KEY(report_id, datasource_id))")
     orch_cur.execute("CREATE TABLE IF NOT EXISTS dashboards (id TEXT PRIMARY KEY, name TEXT, description TEXT)")
     orch_cur.execute("CREATE TABLE IF NOT EXISTS dashboard_cards (id TEXT PRIMARY KEY, dashboard_id TEXT, report_id TEXT, row INTEGER, col INTEGER, width INTEGER DEFAULT 4, height INTEGER DEFAULT 3)")
     # Migration: add sql column to existing table if missing
@@ -429,7 +430,7 @@ def _clean_metabase_templates(sql: str) -> str:
 
 
 @router.get("/reports/{id}/run")
-def run_report(id: str):
+def run_report(id: str, datasource_id: str = None):
     orch_conn = get_orchestration_connection()
     orch_cur = orch_conn.cursor()
     orch_cur.execute("SELECT * FROM reports WHERE id = ?", (id,))
@@ -439,7 +440,8 @@ def run_report(id: str):
     if not report_row:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    ds_id = report_row["datasource_id"]
+    # Use specified datasource if provided, otherwise use report's default
+    ds_id = datasource_id if datasource_id else report_row["datasource_id"]
     query_config = json.loads(report_row["query"])
     stored_sql = report_row["sql"] if "sql" in report_row.keys() else None
 
@@ -1009,6 +1011,73 @@ def export_report_word_post(id: str, body: Dict[str, Any] = None):
     ci = body.get("chart_image") if body else None
     ai = body.get("ai_summary") if body else None
     return _build_word(id, ci, ai)
+
+
+# ─── Report Environment Switching ────────────────────────────────
+
+@router.get("/reports/{id}/datasources")
+def get_report_datasources(id: str):
+    """Get all datasources linked to this report (can run on any of them)."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT d.id, d.name, d.host, d.port, d.database FROM datasources d INNER JOIN report_datasources rd ON d.id = rd.datasource_id WHERE rd.report_id = ?", (id,))
+    rows = cur.fetchall()
+    # If no links exist yet, fall back to the report's original datasource
+    if not rows:
+        cur.execute("SELECT d.id, d.name, d.host, d.port, d.database FROM reports r JOIN datasources d ON r.datasource_id = d.id WHERE r.id = ?", (id,))
+        rows = cur.fetchall()
+    conn.close()
+    return {"datasources": [dict(r) for r in rows]}
+
+
+@router.post("/reports/{id}/datasources", status_code=201)
+def link_datasource_to_report(id: str, datasource_id: str):
+    """Link a datasource to this report so it can run on it."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT OR IGNORE INTO report_datasources (report_id, datasource_id) VALUES (?, ?)", (id, datasource_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Datasource linked to report"}
+
+
+@router.delete("/reports/{id}/datasources/{datasource_id}")
+def unlink_datasource_from_report(id: str, datasource_id: str):
+    """Remove a datasource link from this report."""
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM report_datasources WHERE report_id = ? AND datasource_id = ?", (id, datasource_id))
+    conn.commit()
+    conn.close()
+    return {"message": "Datasource unlinked from report"}
+
+
+@router.get("/datasources/compatible")
+def find_compatible_datasources(reference_ds_id: str):
+    """Find datasources with matching schema structure (same table/column names).
+    Useful for finding dev/QA/prod environments with identical schemas."""
+    ref_schema = get_datasource_schema(reference_ds_id)
+    ref_tables = {t["name"]: set(c["name"] for c in t["columns"]) for t in ref_schema.get("tables", [])}
+
+    conn = get_orchestration_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name FROM datasources WHERE id != ?", (reference_ds_id,))
+    all_ds = cur.fetchall()
+    conn.close()
+
+    compatible = []
+    for ds in all_ds:
+        try:
+            schema = get_datasource_schema(ds["id"])
+            ds_tables = {t["name"]: set(c["name"] for c in t["columns"]) for t in schema.get("tables", [])}
+            # Check if at least 70% of tables match
+            common_tables = set(ref_tables.keys()) & set(ds_tables.keys())
+            if ref_tables and len(common_tables) / len(ref_tables) >= 0.7:
+                compatible.append({"id": ds["id"], "name": ds["name"]})
+        except Exception:
+            pass  # skip unreachable datasources
+
+    return {"compatible": compatible}
 
 
 # ─── Dashboard CRUD ──────────────────────────────────────────────

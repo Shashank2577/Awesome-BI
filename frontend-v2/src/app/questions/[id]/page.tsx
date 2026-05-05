@@ -3,8 +3,8 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield, Hash, TableProperties, Gauge, FunnelIcon, Columns3, AlignStartHorizontal } from 'lucide-react';
-import { getReport, runReport, explainReport, downloadReport } from '@/lib/api';
+import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart, Table2, Download, FileJson, FileSpreadsheet, FileText, FileIcon, Sparkles, Loader2, RefreshCw, Code, ChevronDown, Shield, Hash, TableProperties, Gauge, FunnelIcon, Columns3, AlignStartHorizontal, Server, Database } from 'lucide-react';
+import { getReport, runReport, explainReport, downloadReport, getReportDatasources, getCompatibleDatasources, linkDatasourceToReport } from '@/lib/api';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -31,7 +31,13 @@ export default function QuestionDetail() {
   const chartRef = useRef<(() => Promise<string|null>)|null>(null);
 
   const { data: report, isLoading: rl } = useQuery({ queryKey: ['report',id], queryFn: ()=>getReport(id) });
-  const { data: result, isLoading: dl, refetch } = useQuery({ queryKey: ['result',id], queryFn: ()=>runReport(id), enabled:!!id });
+  const [activeDsId, setActiveDsId] = useState<string | null>(null);
+  const { data: result, isLoading: dl, refetch } = useQuery({
+    queryKey: ['result', id, activeDsId],
+    queryFn: () => runReport(id, activeDsId || undefined),
+    enabled: !!id,
+  });
+  const { data: availableDs } = useQuery({ queryKey: ['report-ds', id], queryFn: ()=>getReportDatasources(id), enabled:!!id });
 
   const [viz, setViz] = useState<Viz>('table');
   const [showSQL, setShowSQL] = useState(false);
@@ -41,6 +47,17 @@ export default function QuestionDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportChart, setExportChart] = useState(true);
   const [exportSummary, setExportSummary] = useState(false);
+
+  // Auto-discover compatible datasources (dev/QA/prod with same schema)
+  useEffect(() => {
+    if (report?.datasource_id && availableDs && availableDs.length <= 1) {
+      getCompatibleDatasources(report.datasource_id).then(compatible => {
+        compatible.forEach((ds: any) => {
+          linkDatasourceToReport(id, ds.id).catch(() => {});
+        });
+      }).catch(() => {});
+    }
+  }, [report?.datasource_id, availableDs?.length, id]);
 
   useEffect(() => { if (report?.visualization && vizOpts.some(o=>o.v===report.visualization)) setViz(report.visualization as Viz); }, [report?.visualization]);
 
@@ -70,7 +87,23 @@ export default function QuestionDetail() {
     <div className="flex items-center gap-2 text-sm text-muted"><Link href="/questions" className="hover:text-foreground">Questions</Link><span>/</span><span className="text-foreground font-medium">{report.name}</span></div>
 
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <div><h1 className="text-3xl font-bold">{report.name}</h1><p className="text-sm text-muted">{report.datasource_name || report.datasource_id}</p></div>
+      <div><h1 className="text-3xl font-bold">{report.name}</h1>
+        <div className="flex items-center gap-2 mt-1">
+          <Database className="h-3.5 w-3.5 text-muted"/>
+          {(availableDs && availableDs.length > 1) ? (
+            <select value={activeDsId || ''} onChange={e => { setActiveDsId(e.target.value || null); }}
+              className="text-sm text-muted bg-transparent border border-border rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer">
+              <option value="">Default ({report.datasource_name || report.datasource_id})</option>
+              {availableDs.map((ds: any) => (
+                <option key={ds.id} value={ds.id}>{ds.name} ({ds.host}/{ds.database})</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-sm text-muted">{report.datasource_name || report.datasource_id}</span>
+          )}
+          {dl && <Loader2 className="h-3 w-3 animate-spin text-muted"/>}
+        </div>
+      </div>
       <div className="flex items-center gap-2">
         <button onClick={()=>refetch()} className="rounded-lg border p-2 text-muted hover:bg-surface-hover"><RefreshCw className="h-4 w-4"/></button>
         <div className="relative">
