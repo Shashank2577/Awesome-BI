@@ -1,9 +1,18 @@
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 async function req<T>(path: string, opts?: RequestInit): Promise<T> {
-  const r = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json', ...opts?.headers }, ...opts });
-  if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || 'Request failed'); }
-  return r.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000); // 60s timeout
+  try {
+    const r = await fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json', ...opts?.headers }, ...opts, signal: controller.signal });
+    if (!r.ok) { const e = await r.json().catch(() => ({ detail: r.statusText })); throw new Error(e.detail || 'Request failed'); }
+    return r.json();
+  } catch (e: any) {
+    if (e.name === 'AbortError') throw new Error('Query timed out after 60 seconds. Try adding a WHERE clause or TOP N limit.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* Datasources */
@@ -36,8 +45,9 @@ export const runRawQuery = (dsId: string, sql: string) => {
 
 /* Exports */
 export const exportUrl = (id: string, fmt: string) => `${API}/reports/${id}/export/${fmt}`;
-export const downloadReport = async (id: string, fmt: string, opts?: { chartImage?: string; aiSummary?: string }) => {
-  const url = exportUrl(id, fmt);
+export const downloadReport = async (id: string, fmt: string, opts?: { chartImage?: string; aiSummary?: string; pdfStyle?: string }) => {
+  const styleParam = fmt === 'pdf' && opts?.pdfStyle && opts.pdfStyle !== 'default' ? `?style=${opts.pdfStyle}` : '';
+  const url = exportUrl(id, fmt) + styleParam;
   const hasBody = opts?.chartImage || opts?.aiSummary;
   const r = await fetch(url, hasBody ? {
     method: 'POST',

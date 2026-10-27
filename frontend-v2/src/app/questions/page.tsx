@@ -90,7 +90,11 @@ export default function QuestionsPage() {
 
               {aiStep===0 && <div className="space-y-3"><h3 className="font-semibold">Choose Datasource</h3>
                 <select value={aiPrompt.ds} onChange={e=>setAiPrompt({...aiPrompt,ds:e.target.value})} className="w-full rounded-lg border bg-background px-3 py-2 text-sm">
-                  <option value="">— Select —</option>{(dss||[]).map((d:any)=><option key={d.id} value={d.id}>{d.name}</option>)}</select>
+                  <option value="">— Select —</option>
+                  {(dss||[]).map((d:any)=>{
+                    const badge = d.db_type === 'mssql' ? '[SQL Server]' : d.port === 0 ? '[SQLite]' : '[PostgreSQL]';
+                    return <option key={d.id} value={d.id}>{badge} {d.name}</option>;
+                  })}</select>
                 <button onClick={()=>setAiStep(1)} disabled={!aiPrompt.ds} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Next</button></div>}
 
               {aiStep===1 && <div className="space-y-3"><h3 className="font-semibold">Configure AI</h3>
@@ -123,14 +127,33 @@ export default function QuestionsPage() {
           {mode === 'sql' && (
             <div className="p-6 space-y-4">
               <h3 className="font-semibold">Write SQL</h3>
-              <p className="text-sm text-muted">Only <strong>SELECT</strong> queries allowed.</p>
-              <select value={sqlDs} onChange={e=>setSqlDs(e.target.value)} className="w-full rounded-lg border bg-background px-3 py-2 text-sm">
-                <option value="">— Select datasource —</option>{(dss||[]).map((d:any)=><option key={d.id} value={d.id}>{d.name}</option>)}</select>
+              <p className="text-sm text-muted">Only <strong>SELECT</strong> queries allowed. MSSQL queries are capped at 5,000 rows automatically.</p>
+
+              {/* Name + datasource — always visible */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-muted mb-1">Question Name</label>
+                  <input value={sqlName} onChange={e=>setSqlName(e.target.value)} placeholder="e.g. W3 Employer Withholdings 2024" className="w-full rounded-lg border bg-background px-3 py-2 text-sm"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted mb-1">Database</label>
+                  <select value={sqlDs} onChange={e=>setSqlDs(e.target.value)} className="w-full rounded-lg border bg-background px-3 py-2 text-sm">
+                    <option value="">— Select database —</option>
+                    {(dss||[]).map((d:any)=>{
+                      const badge = d.db_type === 'mssql' ? '[SQL Server]' : d.port === 0 ? '[SQLite]' : '[PostgreSQL]';
+                      return <option key={d.id} value={d.id}>{badge} {d.name}</option>;
+                    })}
+                  </select>
+                </div>
+              </div>
+
               <SQLEditor value={sql} onChange={setSql} onRun={()=>sqlMut.mutate({dsId:sqlDs,sql})} placeholder="SELECT * FROM users" height="200px"/>
-              <div className="flex gap-3">
+              <div className="flex items-center gap-3">
                 <button onClick={()=>sqlMut.mutate({dsId:sqlDs,sql})} disabled={!sqlDs||!sql.trim()||sqlMut.isPending} className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{sqlMut.isPending?<Loader2 className="h-4 w-4 animate-spin"/>:<Play className="h-4 w-4"/>} Run</button>
                 <button onClick={()=>{setSql('');setSqlResult(null);}} className="rounded-lg border px-4 py-2 text-sm">Clear</button>
+                {sqlMut.isPending && <span className="text-xs text-muted animate-pulse">Running query…</span>}
               </div>
+
               {sqlResult && (
                 <div className="rounded-lg border animate-fade-in">
                   <div className="px-4 py-2 border-b text-sm font-medium">{sqlResult.row_count} rows</div>
@@ -139,10 +162,10 @@ export default function QuestionsPage() {
                     <tbody>{sqlResult.rows.slice(0,50).map((r:any[],i:number)=><tr key={i} className="border-b hover:bg-surface-hover">{r.map((c:any,j:number)=><td key={j} className="px-3 py-1.5 text-xs whitespace-nowrap">{c===null?<span className="text-muted italic">—</span>:String(c)}</td>)}</tr>)}</tbody></table>
                   </div>
                   <div className="border-t p-4 bg-background rounded-b-lg">
-                    <div className="flex items-end gap-4">
-                      <input value={sqlName} onChange={e=>setSqlName(e.target.value)} placeholder="Name" className="flex-1 rounded-lg border bg-surface px-3 py-2 text-sm"/>
+                    <div className="flex items-center gap-3">
                       <select value={sqlViz} onChange={e=>setSqlViz(e.target.value)} className="rounded-lg border bg-surface px-3 py-2 text-sm">{vizList.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select>
-                      <button onClick={()=>createMut.mutate({name:sqlName||'SQL Query',datasource_id:sqlDs,query:{select:sqlResult.columns,sql:sqlResult.sql},visualization:sqlViz,sql:sqlResult.sql})} disabled={!sqlName||createMut.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Save</button>
+                      <button onClick={()=>createMut.mutate({name:sqlName||'SQL Query',datasource_id:sqlDs,query:{select:sqlResult.columns,sql:sqlResult.sql},visualization:sqlViz,sql:sqlResult.sql})} disabled={!sqlName.trim()||createMut.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{createMut.isPending?<Loader2 className="h-4 w-4 animate-spin"/>:'Save Question'}</button>
+                      {!sqlName.trim() && <span className="text-xs text-amber-600">Enter a name above to save</span>}
                     </div>
                   </div>
                 </div>

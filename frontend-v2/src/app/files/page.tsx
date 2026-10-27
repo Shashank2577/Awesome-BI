@@ -1,6 +1,6 @@
 'use client';
 import { useState, useCallback, useRef } from 'react';
-import { Upload, FileSpreadsheet, Play, Loader2, Table2, BarChart3, Database, Trash2, ArrowUp } from 'lucide-react';
+import { Upload, FileSpreadsheet, Play, Loader2, Table2, BarChart3, Database, Trash2 } from 'lucide-react';
 import { ChartViewer } from '@/components/charts/chart-viewer';
 import { SQLEditor } from '@/components/charts/sql-editor';
 import toast from 'react-hot-toast';
@@ -13,45 +13,14 @@ export default function FilesPage() {
   const [sql, setSql] = useState('SELECT * FROM ');
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [dbReady, setDbReady] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const dbRef = useRef<any>(null);
-  const connRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const initDB = useCallback(async () => {
-    if (dbReady) return;
-    setLoading(true);
-    try {
-      const duckdb = await import('@duckdb/duckdb-wasm');
-      const JSDELIVR_BUNDLES = {
-        mvp: { mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-mvp.wasm', mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-browser-mvp.worker.js' },
-      };
-      const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
-      const worker = new Worker(bundle.mainWorker!);
-      const logger = new duckdb.ConsoleLogger();
-      const db = new duckdb.AsyncDuckDB(logger, worker);
-      await db.instantiate(bundle.mainModule);
-      const conn = await db.connect();
-      dbRef.current = db;
-      connRef.current = conn;
-      setDbReady(true);
-      toast.success('DuckDB ready — running in your browser');
-    } catch (e: any) {
-      toast.error('DuckDB init failed: ' + e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [dbReady]);
-
   const handleFile = useCallback(async (file: File) => {
-    if (!dbReady) await initDB();
-    if (!connRef.current) return;
     setLoading(true);
     try {
       const name = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_');
       const text = await file.text();
-      // Parse CSV
       const lines = text.trim().split('\n');
       const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
       const rows = lines.slice(1).map(line => {
@@ -78,7 +47,7 @@ export default function FilesPage() {
     } finally {
       setLoading(false);
     }
-  }, [dbReady, initDB]);
+  }, []);
 
   const runFileQuery = useCallback(async () => {
     if (!activeTable) return;
@@ -86,7 +55,6 @@ export default function FilesPage() {
     if (!table) return;
     setLoading(true);
     try {
-      // Simple SQL parser for basic queries on loaded tables
       const query = sql.trim().toUpperCase();
       let cols = table.columns;
       let rows = table.rows;
@@ -97,7 +65,6 @@ export default function FilesPage() {
         const limitIdx = query.indexOf('LIMIT');
         const orderIdx = query.indexOf('ORDER BY');
 
-        // Apply WHERE
         let filtered = rows;
         if (whereIdx > 0) {
           const whereEnd = Math.min(
@@ -105,7 +72,6 @@ export default function FilesPage() {
             orderIdx > 0 ? orderIdx : Infinity
           );
           const whereClause = sql.slice(whereIdx + 6, whereEnd > 0 ? whereEnd : undefined).trim();
-          // Simple equality filter
           const eqMatch = whereClause.match(/(\w+)\s*=\s*'?([^'\s]+)'?/);
           if (eqMatch) {
             const colIdx = table.columns.findIndex(c => c.toLowerCase() === eqMatch[1].toLowerCase());
@@ -113,7 +79,6 @@ export default function FilesPage() {
               filtered = rows.filter(r => String(r[colIdx]) === eqMatch[2]);
             }
           }
-          // Simple comparison
           const cmpMatch = whereClause.match(/(\w+)\s*([><]=?)\s*(\d+)/);
           if (cmpMatch) {
             const colIdx = table.columns.findIndex(c => c.toLowerCase() === cmpMatch[1].toLowerCase());
@@ -128,7 +93,6 @@ export default function FilesPage() {
           }
         }
 
-        // Select specific columns
         if (selectPart !== '*') {
           const selCols = selectPart.split(',').map(s => s.trim().toLowerCase());
           const selIdx = selCols.map(sc => table.columns.findIndex(c => c.toLowerCase() === sc)).filter(i => i >= 0);
@@ -138,7 +102,6 @@ export default function FilesPage() {
           }
         }
 
-        // ORDER BY
         if (orderIdx > 0) {
           const orderEnd = limitIdx > 0 ? limitIdx : undefined;
           const orderClause = sql.slice(orderIdx + 9, orderEnd).trim().replace(/DESC/i, '').trim().toLowerCase();
@@ -152,7 +115,6 @@ export default function FilesPage() {
           }
         }
 
-        // LIMIT
         if (limitIdx > 0) {
           const limitVal = parseInt(sql.slice(limitIdx + 6).trim());
           if (limitVal > 0) filtered = filtered.slice(0, limitVal);
@@ -181,7 +143,7 @@ export default function FilesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">File Analysis</h1>
-          <p className="mt-1 text-muted">Upload CSV files, query them instantly in your browser. No data leaves your machine.</p>
+          <p className="mt-1 text-muted">Upload CSV files and query them instantly in your browser. No data leaves your machine.</p>
         </div>
         <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white hover:opacity-90">
           <Upload className="h-4 w-4"/> Upload CSV
@@ -190,7 +152,6 @@ export default function FilesPage() {
 
       <input ref={fileInputRef} type="file" accept=".csv,.tsv,.txt" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}/>
 
-      {/* Drop zone */}
       {tables.length === 0 && (
         <div
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -199,11 +160,10 @@ export default function FilesPage() {
           className={`rounded-xl border-2 border-dashed p-16 text-center transition-colors ${dragging ? 'border-primary bg-primary/5' : 'border-border'}`}>
           <FileSpreadsheet className="mx-auto h-16 w-16 text-muted"/>
           <p className="mt-4 text-lg font-medium">Drop a CSV file here</p>
-          <p className="mt-1 text-sm text-muted">or click Upload CSV above. DuckDB runs entirely in your browser.</p>
+          <p className="mt-1 text-sm text-muted">or click Upload CSV above. All processing happens in your browser.</p>
         </div>
       )}
 
-      {/* Table tabs */}
       {tables.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           {tables.map(t => (
@@ -218,7 +178,6 @@ export default function FilesPage() {
         </div>
       )}
 
-      {/* SQL editor */}
       {activeTable && (
         <div className="space-y-4">
           <SQLEditor value={sql} onChange={setSql} onRun={runFileQuery} placeholder={`SELECT * FROM ${activeTable}`} height="120px"/>
@@ -231,7 +190,6 @@ export default function FilesPage() {
         </div>
       )}
 
-      {/* Results */}
       {result && (
         <div className="rounded-xl border bg-surface p-6 animate-fade-in">
           <p className="text-sm text-muted mb-3">{result.row_count} rows</p>

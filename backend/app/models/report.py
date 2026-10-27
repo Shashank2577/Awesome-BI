@@ -8,6 +8,7 @@ class DatasourceCreate(BaseModel):
     database: str
     username: str
     password: str
+    db_type: str = "postgresql"
 
 class ColumnSchema(BaseModel):
     name: str

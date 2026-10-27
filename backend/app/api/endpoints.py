@@ -8,6 +8,13 @@ import psycopg2.extras
 import os
 import time
 
+try:
+    import pymssql
+    PYMSSQL_AVAILABLE = True
+except ImportError:
+    pymssql = None
+    PYMSSQL_AVAILABLE = False
+
 from app.models.report import DatasourceCreate, DatabaseSchema, ReportCreate
 
 router = APIRouter()
@@ -49,19 +56,37 @@ def get_datasource_connection(ds_id: str = None):
         
         logger.info(f"Found datasource: {ds['name']} at {ds['host']}")
         if ds["host"] and ds["host"] != "localhost":
-            logger.info(f"Connecting to external POSTGRES at {ds['host']}:{ds['port']}")
-            try:
-                return psycopg2.connect(
-                    host=ds["host"],
-                    port=ds["port"],
-                    database=ds["database"],
-                    user=ds["username"],
-                    password=ds["password"],
-                    connect_timeout=10
-                )
-            except Exception as e:
-                logger.error(f"External connection failed: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to connect to external DB: {str(e)}")
+            ds_db_type = ds["db_type"] if ds["db_type"] else ("mssql" if ds["port"] == 1433 else "postgresql")
+            if ds_db_type == "mssql":
+                if not PYMSSQL_AVAILABLE:
+                    raise HTTPException(status_code=500, detail="pymssql is not installed. Run: pip install pymssql")
+                logger.info(f"Connecting to MSSQL at {ds['host']}:{ds['port']}")
+                try:
+                    return pymssql.connect(
+                        server=ds["host"],
+                        port=ds["port"],
+                        database=ds["database"],
+                        user=ds["username"],
+                        password=ds["password"],
+                        timeout=10
+                    )
+                except Exception as e:
+                    logger.error(f"MSSQL connection failed: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to connect to MSSQL: {str(e)}")
+            else:
+                logger.info(f"Connecting to external POSTGRES at {ds['host']}:{ds['port']}")
+                try:
+                    return psycopg2.connect(
+                        host=ds["host"],
+                        port=ds["port"],
+                        database=ds["database"],
+                        user=ds["username"],
+                        password=ds["password"],
+                        connect_timeout=10
+                    )
+                except Exception as e:
+                    logger.error(f"External connection failed: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to connect to external DB: {str(e)}")
     
     logger.info(f"Falling back to default connection (USE_POSTGRES={USE_POSTGRES})")
     if USE_POSTGRES:
@@ -85,6 +110,13 @@ def init_db():
         orch_cur.execute("ALTER TABLE reports ADD COLUMN sql TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
+    # Migration: add db_type column to datasources if missing
+    try:
+        orch_cur.execute("ALTER TABLE datasources ADD COLUMN db_type TEXT DEFAULT 'postgresql'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    # Migration: auto-detect MSSQL for existing datasources with port 1433
+    orch_cur.execute("UPDATE datasources SET db_type = 'mssql' WHERE port = 1433 AND (db_type IS NULL OR db_type = 'postgresql')")
     orch_conn.commit()
     orch_conn.close()
 
@@ -109,10 +141,14 @@ init_db()
 @router.post("/datasources", status_code=201)
 def create_datasource(datasource: DatasourceCreate):
     ds_id = str(uuid.uuid4())
+    # Auto-detect MSSQL when port is 1433 and db_type was not explicitly overridden
+    db_type = datasource.db_type
+    if db_type == "postgresql" and datasource.port == 1433:
+        db_type = "mssql"
     conn = get_orchestration_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO datasources (id, name, host, port, database, username, password) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (ds_id, datasource.name, datasource.host, datasource.port, datasource.database, datasource.username, datasource.password))
+    cur.execute("INSERT INTO datasources (id, name, host, port, database, username, password, db_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (ds_id, datasource.name, datasource.host, datasource.port, datasource.database, datasource.username, datasource.password, db_type))
     conn.commit()
     conn.close()
     return {"id": ds_id, "message": "Datasource created successfully"}
@@ -124,9 +160,18 @@ def get_datasource_schema(id: str):
     
     schema = {"tables": []}
     try:
-        if isinstance(conn, psycopg2.extensions.connection):
+        if PYMSSQL_AVAILABLE and isinstance(conn, pymssql.Connection):
+            cur = conn.cursor(as_dict=True)
+            cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME")
+            tables = cur.fetchall()
+            logger.info(f"Found MSSQL tables: {[t['TABLE_NAME'] for t in tables]}")
+            for table_row in tables:
+                table_name = table_row["TABLE_NAME"]
+                cur.execute("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=%s ORDER BY ORDINAL_POSITION", (table_name,))
+                schema["tables"].append({"name": table_name, "columns": [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in cur.fetchall()]})
+        elif isinstance(conn, psycopg2.extensions.connection):
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            
+
             # DEBUG: List all databases
             cur.execute("SELECT datname FROM pg_database WHERE datistemplate = false")
             dbs = [r[0] for r in cur.fetchall()]
@@ -456,7 +501,13 @@ def run_report(id: str, datasource_id: str = None):
 
     conn = get_datasource_connection(ds_id)
     is_postgres = isinstance(conn, psycopg2.extensions.connection)
-    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
+    is_mssql = PYMSSQL_AVAILABLE and isinstance(conn, pymssql.Connection)
+    if is_postgres:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    elif is_mssql:
+        cur = conn.cursor(as_dict=True)
+    else:
+        cur = conn.cursor()
 
     try:
         cur.execute(sql)
@@ -465,8 +516,15 @@ def run_report(id: str, datasource_id: str = None):
             conn.close()
             return {"columns": [], "rows": []}
 
-        columns = [desc[0] for desc in cur.description] if is_postgres else list(results[0].keys())
-        rows = [list(r) for r in results] if is_postgres else [[r[col] for col in columns] for r in results]
+        if is_postgres:
+            columns = [desc[0] for desc in cur.description]
+            rows = [list(r) for r in results]
+        elif is_mssql:
+            columns = list(results[0].keys())
+            rows = [[r[col] for col in columns] for r in results]
+        else:
+            columns = list(results[0].keys())
+            rows = [[r[col] for col in columns] for r in results]
 
         conn.close()
         return {"columns": columns, "rows": rows, "sql": sql}
@@ -482,7 +540,7 @@ def list_datasources():
     """List all configured datasources."""
     conn = get_orchestration_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, host, port, database FROM datasources")
+    cur.execute("SELECT id, name, host, port, database, db_type FROM datasources")
     rows = cur.fetchall()
     conn.close()
     return {"datasources": [dict(r) for r in rows]}
@@ -505,14 +563,9 @@ def test_datasource_connection(id: str):
     """Test if a datasource connection is working."""
     try:
         conn = get_datasource_connection(id)
-        if isinstance(conn, psycopg2.extensions.connection):
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            cur.fetchone()
-        else:
-            cur = conn.cursor()
-            cur.execute("SELECT 1")
-            cur.fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
         conn.close()
         return {"status": "ok", "message": "Connection successful"}
     except Exception as e:
@@ -543,16 +596,38 @@ def run_raw_query(datasource_id: str, sql: str):
     """
     Run a raw SQL query against a datasource.
     Only SELECT queries are allowed for safety.
+    Supports Metabase-style [[ optional blocks ]] and {{variable}} templates.
     """
-    # Safety: only allow SELECT statements
+    import re as _re
+
+    # 1. Strip Metabase optional blocks [[ ... ]] entirely (they contain date params etc.)
+    sql = _re.sub(r'\[\[.*?\]\]', '', sql, flags=_re.DOTALL)
+
+    # 2. Replace {{variable}} template params with NULL so query still runs
+    sql = _re.sub(r'\{\{[^}]+\}\}', 'NULL', sql)
+
+    # 3. Remove -- single-line comments so they don't confuse the SELECT check
+    #    (keep newlines so line numbers stay intact for error messages)
+    sql_no_comments = _re.sub(r'--[^\n]*', '', sql)
+
+    # 4. If multiple statements separated by semicolons, take the last non-empty SELECT
+    statements = [s.strip() for s in sql_no_comments.split(';') if s.strip()]
+    # Pick the last SELECT statement (user's final/preferred query)
+    select_stmts = [s for s in statements if s.upper().lstrip().startswith('SELECT') or s.upper().lstrip().startswith('WITH')]
+    if select_stmts:
+        sql = select_stmts[-1]
+    else:
+        sql = sql_no_comments.strip()
+
     sql_stripped = sql.strip()
     sql_upper = sql_stripped.upper()
 
-    # Block dangerous statements
+    # 5. Block dangerous statements
     dangerous = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE',
                  'TRUNCATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'MERGE']
     for keyword in dangerous:
-        if sql_upper.startswith(keyword) or f' {keyword} ' in f' {sql_upper} ':
+        # word-boundary check to avoid false positives (e.g. EXTRACT vs EXEC)
+        if _re.search(rf'\b{keyword}\b', sql_upper):
             raise HTTPException(
                 status_code=403,
                 detail=f"Only SELECT queries are allowed. Detected: {keyword}"
@@ -564,7 +639,22 @@ def run_raw_query(datasource_id: str, sql: str):
     # Run the query
     conn = get_datasource_connection(datasource_id)
     is_postgres = isinstance(conn, psycopg2.extensions.connection)
-    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
+    is_mssql = PYMSSQL_AVAILABLE and isinstance(conn, pymssql.Connection)
+
+    # For MSSQL: inject TOP 5000 if the query has no existing TOP/FETCH clause
+    if is_mssql:
+        sql_check = sql_upper.replace('\n', ' ').replace('\r', ' ')
+        if 'TOP ' not in sql_check and 'FETCH ' not in sql_check:
+            # Insert TOP 5000 after SELECT (handles SELECT DISTINCT too)
+            import re as _re
+            sql = _re.sub(r'(?i)^(SELECT\s+(?:DISTINCT\s+)?)', r'\g<1>TOP 5000 ', sql.strip(), count=1)
+
+    if is_postgres:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    elif is_mssql:
+        cur = conn.cursor(as_dict=True)
+    else:
+        cur = conn.cursor()
 
     try:
         cur.execute(sql)
@@ -577,6 +667,9 @@ def run_raw_query(datasource_id: str, sql: str):
         if is_postgres:
             columns = [desc[0] for desc in cur.description]
             rows = [list(r) for r in results]
+        elif is_mssql:
+            columns = list(results[0].keys())
+            rows = [[r[col] for col in columns] for r in results]
         else:
             columns = list(results[0].keys())
             rows = [[r[col] for col in columns] for r in results]
@@ -675,14 +768,27 @@ def _run_report_for_export(report_id: str):
 
     conn = get_datasource_connection(ds_id)
     is_postgres = isinstance(conn, psycopg2.extensions.connection)
-    cur2 = conn.cursor(cursor_factory=psycopg2.extras.DictCursor) if is_postgres else conn.cursor()
+    is_mssql = PYMSSQL_AVAILABLE and isinstance(conn, pymssql.Connection)
+    if is_postgres:
+        cur2 = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    elif is_mssql:
+        cur2 = conn.cursor(as_dict=True)
+    else:
+        cur2 = conn.cursor()
     cur2.execute(sql)
     results = cur2.fetchall()
     if not results:
         conn.close()
         return {"columns": [], "rows": [], "report_name": row["name"]}
-    columns = [desc[0] for desc in cur2.description] if is_postgres else list(results[0].keys())
-    rows = [list(r) for r in results] if is_postgres else [[r[col] for col in columns] for r in results]
+    if is_postgres:
+        columns = [desc[0] for desc in cur2.description]
+        rows = [list(r) for r in results]
+    elif is_mssql:
+        columns = list(results[0].keys())
+        rows = [[r[col] for col in columns] for r in results]
+    else:
+        columns = list(results[0].keys())
+        rows = [[r[col] for col in columns] for r in results]
     conn.close()
     return {"columns": columns, "rows": rows, "report_name": row["name"]}
 
@@ -759,6 +865,180 @@ def export_report_excel(id: str):
         iter([output.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _is_text_col(col_name: str, sample_vals: list) -> bool:
+    """True if column contains text labels (months, categories, names) rather than numbers."""
+    # Only exclude columns where the actual values are text, not numbers
+    non_null = [v for v in sample_vals[:20] if v is not None]
+    if not non_null:
+        return False
+    numeric_count = 0
+    for v in non_null:
+        try:
+            float(str(v).replace(',', ''))
+            numeric_count += 1
+        except (ValueError, TypeError):
+            pass
+    # If >60% of sample values are numeric, treat as numeric column
+    return numeric_count < len(non_null) * 0.6
+
+
+def _build_pdf_citytax(report_id: str, subtitle: str = "by Date Deposited - Multiple Year Comparison",
+                        report_code: str = "rptRctSumMult", city_label: str = "City of Dublin",
+                        display_title: str = "Receipt Summary Report"):
+    """PDF export styled to match the original CityTax rptRctSumMult receipt summary format."""
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        raise HTTPException(status_code=501, detail="fpdf2 not installed")
+
+    import datetime, io as _io, re as _re
+
+    data = _run_report_for_export(report_id)
+    cols  = data["columns"]
+    rows  = data["rows"]
+    now_str = datetime.datetime.now().strftime("%m/%d/%Y %I:%M:%S %p")
+
+    # Classify each column: text (group/label) or numeric (money/pct)
+    text_cols = set()
+    pct_cols  = set()
+    for ci, col in enumerate(cols):
+        sample = [r[ci] for r in rows[:30]]
+        if _is_text_col(col, sample):
+            text_cols.add(ci)
+        col_lower = col.lower()
+        if '%' in col or 'percent' in col_lower or 'pct' in col_lower:
+            pct_cols.add(ci)
+
+    def fmt(ci, val):
+        if val is None:
+            return ""
+        if ci in text_cols:
+            return str(val)
+        try:
+            f = float(val)
+            if ci in pct_cols:
+                return f"{f:.2f}%"
+            return f"{f:,.2f}"
+        except (ValueError, TypeError):
+            return str(val)
+
+    class ReportPDF(FPDF):
+        def __init__(self):
+            super().__init__(orientation='L', unit='mm', format='A4')  # A4 landscape = 297×210mm
+            self._title    = display_title
+            self._subtitle = subtitle
+            self._rcode    = report_code
+            self._city     = city_label
+            self._now      = now_str
+
+        def header(self):
+            # Line 1: Bold report title left, date right
+            self.set_font("Helvetica", "B", 13)
+            self.set_xy(12, 7)
+            self.cell(180, 7, self._title, ln=0)
+            self.set_font("Helvetica", "", 9)
+            self.cell(0, 7, self._now, ln=True, align='R')
+            # Line 2: city left, report code + page right (NO "CityTax")
+            self.set_font("Helvetica", "", 9)
+            self.set_x(12)
+            self.cell(150, 5, self._city, ln=0)
+            self.cell(0, 5, f"Page: {self.page_no()}", ln=True, align='R')
+            # Line 3: subtitle left
+            if self._subtitle:
+                self.set_x(12)
+                self.cell(0, 5, self._subtitle, ln=True)
+            # Horizontal rule
+            self.set_draw_color(0, 0, 0)
+            self.set_line_width(0.5)
+            self.line(12, self.get_y() + 1, self.w - 12, self.get_y() + 1)
+            self.ln(3)
+
+        def footer(self):
+            self.set_y(-10)
+            self.set_font("Helvetica", "", 8)
+            self.set_x(12)
+            self.cell(0, 5, f"Page: {self.page_no()}", ln=0, align='R')
+
+    pdf = ReportPDF()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_margins(12, 8, 12)
+    pdf.add_page()
+
+    FONT_SIZE = 7.5
+    ROW_H = 5.5
+    PAD = 1.5  # extra horizontal padding per cell
+
+    # Measure column widths from actual formatted content
+    pdf.set_font("Helvetica", "", FONT_SIZE)
+    available = pdf.w - 24  # 12mm each side
+
+    col_w = []
+    for ci, col in enumerate(cols):
+        # header width
+        w = pdf.get_string_width(str(col)) + PAD * 2
+        # data width (sample 60 rows)
+        for r in rows[:60]:
+            cw = pdf.get_string_width(fmt(ci, r[ci])) + PAD * 2
+            w = max(w, cw)
+        col_w.append(w)
+
+    # Scale proportionally to fit available width
+    total_w = sum(col_w) or 1
+    if total_w > available:
+        scale = available / total_w
+        col_w = [w * scale for w in col_w]
+
+    # Table column headers
+    pdf.set_font("Helvetica", "B", FONT_SIZE)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_line_width(0.25)
+    for ci, col in enumerate(cols):
+        align = 'L' if ci in text_cols else 'R'
+        pdf.cell(col_w[ci], ROW_H + 0.5, str(col), border='B', align=align)
+    pdf.ln()
+
+    # Bold rule under headers
+    pdf.set_line_width(0.5)
+    pdf.line(12, pdf.get_y(), pdf.w - 12, pdf.get_y())
+    pdf.set_line_width(0.2)
+
+    # Data rows
+    prev_group = None
+    for row in rows:
+        group_val = str(row[0]) if row[0] is not None else ""
+        is_total  = any(str(v).strip().lower() in ('totals', 'total') for v in row if v is not None)
+
+        # Thin separator line at start of each new month group
+        if prev_group is not None and group_val != prev_group:
+            pdf.set_line_width(0.35)
+            pdf.line(12, pdf.get_y(), pdf.w - 12, pdf.get_y())
+            pdf.set_line_width(0.2)
+
+        pdf.set_font("Helvetica", "B" if is_total else "", FONT_SIZE)
+
+        for ci, val in enumerate(row):
+            if ci == 0:
+                # Show month name only on first row of group
+                display = group_val if group_val != prev_group else ""
+            else:
+                display = fmt(ci, val)
+            align = 'L' if ci in text_cols else 'R'
+            pdf.cell(col_w[ci], ROW_H, display, border='B', align=align)
+
+        pdf.ln()
+        prev_group = group_val
+
+    out = _io.BytesIO()
+    pdf.output(out)
+    out.seek(0)
+    safe_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', report_code or display_title)
+    return StreamingResponse(
+        iter([out.getvalue()]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={safe_name}.pdf"},
     )
 
 
@@ -913,8 +1193,10 @@ def _build_pdf(report_id: str, chart_image: str = None, ai_summary: str = None):
 
 
 @router.get("/reports/{id}/export/pdf")
-def export_report_pdf_get(id: str, chart_image: str = None, ai_summary: str = None):
-    """GET: Export report as PDF. For large chart/summary, use POST."""
+def export_report_pdf_get(id: str, chart_image: str = None, ai_summary: str = None, style: str = "default"):
+    """GET: Export report as PDF. style=citytax for CityTax receipt summary format."""
+    if style == "citytax":
+        return _build_pdf_citytax(id)
     return _build_pdf(id, chart_image, ai_summary)
 
 

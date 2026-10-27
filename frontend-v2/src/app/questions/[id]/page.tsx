@@ -47,6 +47,7 @@ export default function QuestionDetail() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportChart, setExportChart] = useState(true);
   const [exportSummary, setExportSummary] = useState(false);
+  const [pdfStyle, setPdfStyle] = useState<'default'|'citytax'>('default');
   const [showLinkDs, setShowLinkDs] = useState(false);
   const { data: allDs } = useQuery({ queryKey: ['all-ds'], queryFn: listDatasources, enabled: showLinkDs });
   const qc = useQueryClient();
@@ -77,8 +78,9 @@ export default function QuestionDetail() {
       await downloadReport(id, fmt, {
         chartImage: chartImg,
         aiSummary: includeAiSummary && aiExp ? aiExp : undefined,
+        pdfStyle: fmt === 'pdf' ? pdfStyle : undefined,
       });
-      const extras = [exportChart && viz!=='table'?'chart':'', includeAiSummary?'summary':''].filter(Boolean).join(' + ');
+      const extras = [exportChart && viz!=='table'?'chart':'', includeAiSummary?'summary':'', fmt==='pdf'&&pdfStyle==='citytax'?'CityTax style':''].filter(Boolean).join(' + ');
       toast.success(`Exported as ${fmt.toUpperCase()}` + (extras ? ` with ${extras}` : ''));
     } catch(e:any) { toast.error(e.message); }
   };
@@ -138,6 +140,18 @@ export default function QuestionDetail() {
             <div className="absolute right-0 top-full mt-1 rounded-lg border bg-surface p-4 shadow-xl z-20 w-72 space-y-3">
               <div className="grid grid-cols-2 gap-1.5">
                 {exportFmts.map(e=><button key={e.f} onClick={() => { doExport(e.f, exportSummary); setExportOpen(false); }} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-surface-hover transition-colors"><e.i className="h-4 w-4 text-primary"/>{e.l}</button>)}
+              </div>
+              <div className="border-t pt-3 space-y-2">
+                <p className="text-xs font-medium text-muted uppercase tracking-wider">PDF Style</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button onClick={()=>setPdfStyle('default')} className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${pdfStyle==='default'?'border-primary bg-primary/10 text-primary':'border-border text-muted hover:bg-surface-hover'}`}>
+                    Default
+                  </button>
+                  <button onClick={()=>setPdfStyle('citytax')} className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${pdfStyle==='citytax'?'border-primary bg-primary/10 text-primary':'border-border text-muted hover:bg-surface-hover'}`}>
+                    CityTax
+                  </button>
+                </div>
+                {pdfStyle==='citytax' && <p className="text-xs text-muted">Landscape · grouped months · formatted numbers · header/footer</p>}
               </div>
               <div className="border-t pt-3 space-y-2">
                 <p className="text-xs font-medium text-muted uppercase tracking-wider">Options</p>

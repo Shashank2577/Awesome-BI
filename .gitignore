@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .omc/
 *.db
+
+/.prompture/
